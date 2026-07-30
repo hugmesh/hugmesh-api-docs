@@ -1,0 +1,120 @@
+<nav class="nav" aria-labelledby="nav-heading">
+  <h2 id="nav-heading">API navigator</h2>
+
+  <div class="picker">
+    <label for="spec-picker">Service spec</label>
+    <select
+      id="spec-picker"
+      aria-describedby="spec-picker-hint"
+      [value]="specId()"
+      (change)="switchSpec($any($event.target).value)">
+      @for (id of specIds; track id) {
+        <option [value]="id">{{ specs[id].label }}</option>
+      }
+    </select>
+    <p id="spec-picker-hint" class="hint">
+      Choose which platform service's OpenAPI contract to browse. Switching
+      reloads the operation list below and clears the current selection.
+    </p>
+  </div>
+
+  <p id="op-list-hint" class="hint nav-hint">
+    Operations are grouped by tag. Select one to view its reference and to send a
+    test request from the Try-it-out tab.
+  </p>
+
+  @for (tag of tags(); track tag.name) {
+    <div class="tag-group">
+      <h3 class="tag-name">{{ tag.name }}</h3>
+      <ul class="op-list">
+        @for (op of opsByTag(tag.name); track op.method + op.path) {
+          <li>
+            <button
+              type="button"
+              class="op"
+              [class.active]="isActive(op)"
+              [attr.aria-current]="isActive(op) ? 'true' : null"
+              [attr.aria-label]="opLabel(op)"
+              aria-describedby="op-list-hint"
+              (click)="select(op)">
+              <span class="method method-{{ op.method }}" aria-hidden="true">{{ op.method.toUpperCase() }}</span>
+              <span class="op-path">{{ op.path }}</span>
+            </button>
+          </li>
+        }
+      </ul>
+    </div>
+  }
+  @if (tags().length === 0 && !loadError()) {
+    <p class="loading" role="status">Loading spec…</p>
+  }
+</nav>
+
+<div class="pane">
+  <header class="header">
+    <h1>{{ spec()?.info?.title || 'HugMesh platform API' }}</h1>
+    <p class="meta">
+      <span>v{{ spec()?.info?.version || '—' }}</span>
+      <span aria-hidden="true">·</span>
+      <span>{{ specSource() }}</span>
+    </p>
+  </header>
+
+  <div
+    class="tabs"
+    role="tablist"
+    aria-label="API view"
+    aria-describedby="tabs-hint">
+    @for (t of tabs; track t) {
+      <button
+        [id]="'tab-' + t"
+        type="button"
+        role="tab"
+        [class.active]="tab() === t"
+        [attr.aria-selected]="tab() === t"
+        [attr.tabindex]="tab() === t ? 0 : -1"
+        [attr.aria-controls]="'panel-' + t"
+        [attr.aria-describedby]="'tab-hint-' + t"
+        (click)="tab.set(t)"
+        (keydown)="onTabKey($event, t)">
+        {{ t === 'reference' ? 'Reference' : 'Try it out' }}
+      </button>
+    }
+  </div>
+  <p id="tabs-hint" class="hint tabs-hint">
+    Use the arrow keys to move between tabs.
+    <span id="tab-hint-reference" class="sr">
+      Reference shows the read-only contract: parameters, request body, and
+      responses.
+    </span>
+    <span id="tab-hint-explore" class="sr">
+      Try it out lets you send a live test request to this endpoint with your
+      admin bearer token.
+    </span>
+  </p>
+
+  <p class="sr" role="status" aria-live="polite">
+    @if (active(); as a) {
+      Selected operation {{ a.method.toUpperCase() }} {{ a.path }}.
+    } @else {
+      No operation selected.
+    }
+  </p>
+
+  @if (loadError()) {
+    <p class="err" role="alert" aria-live="assertive">{{ loadError() }}</p>
+  }
+
+  <div
+    class="body"
+    role="tabpanel"
+    [id]="'panel-' + tab()"
+    [attr.aria-labelledby]="'tab-' + tab()"
+    tabindex="0">
+    @if (tab() === 'reference') {
+      <hug-api-docs-api-reference [spec]="spec()" [active]="active()" />
+    } @else {
+      <hug-api-docs-api-explorer [spec]="spec()" [active]="active()" />
+    }
+  </div>
+</div>

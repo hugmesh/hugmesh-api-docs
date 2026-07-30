@@ -1,0 +1,11 @@
+{
+  "x-stub": "STUB spec — replace by running `npm run gen:fetch:actions` against a dev-profile hugmesh-actions (port 8090). The live fallback (SPECS.actions.fallback) renders the real contract at runtime.",
+  "openapi": "3.0.1",
+  "info": {
+    "title": "HugMesh Actions API",
+    "version": "0.0.1",
+    "description": "HugMesh Actions — stub OpenAPI spec. Real spec captured at build time via gen:fetch:actions, or loaded live from /v3/api-docs (ROLE_ADMIN in prod)."
+  },
+  "tags": [],
+  "paths": {}
+}

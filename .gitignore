@@ -1,0 +1,13 @@
+/node_modules
+/dist
+/out-tsc
+/.angular
+/coverage
+*.log
+.DS_Store
+.env
+
+# ng-openapi-gen output — regenerated on prebuild from openapi.json (games
+# convention). The committed per-service specs under src/assets/specs/ stay.
+/src/app/api
+/openapi.json

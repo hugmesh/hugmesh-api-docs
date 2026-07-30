@@ -1,0 +1,112 @@
+// Read-only reference view — re-themed from the games light-mode hex onto the
+// HugMesh brand --hug-* dark palette.
+:host {
+  display: block;
+  line-height: 1.55;
+  max-width: 960px;
+}
+
+.crumb {
+  color: var(--hug-text-muted);
+  font-size: 0.8rem;
+  margin: 0 0 6px;
+}
+
+// Visible inline help text — AAA --hug-text-muted (8.77:1), rem-scaled so it
+// enlarges with the user's zoom / text-size preference.
+.hint {
+  color: var(--hug-text-muted);
+  font-size: 0.82rem;
+  line-height: 1.45;
+  margin: 0 0 12px;
+}
+
+h2 {
+  color: var(--hug-accent-soft);
+  font-size: 1.3rem;
+  margin: 0 0 6px;
+}
+
+h3 {
+  color: var(--hug-accent-soft);
+  font-size: 1rem;
+  margin: 18px 0 6px;
+  border-bottom: 1px solid var(--hug-border);
+  padding-bottom: 3px;
+}
+
+code,
+pre {
+  font-family: ui-monospace, 'JetBrains Mono', 'Fira Code', 'Consolas', monospace;
+  font-size: 0.86rem;
+}
+
+pre {
+  background: var(--hug-bg-1);
+  border: 1px solid var(--hug-border);
+  border-radius: 6px;
+  padding: 10px 14px;
+  overflow: auto;
+  color: var(--hug-text);
+  white-space: pre;
+}
+
+.blurb {
+  background: var(--hug-bg-1);
+  border-left: 3px solid var(--hug-accent);
+  padding: 10px 14px;
+  border-radius: 0 4px 4px 0;
+  margin: 12px 0;
+  font-size: 0.92rem;
+}
+
+table {
+  border-collapse: collapse;
+  width: 100%;
+  font-size: 0.88rem;
+  margin: 6px 0 14px;
+}
+
+th,
+td {
+  border-bottom: 1px solid var(--hug-border);
+  padding: 6px 10px;
+  vertical-align: top;
+  text-align: left;
+}
+
+th {
+  color: var(--hug-accent-soft);
+  font-weight: 700;
+}
+
+.pill {
+  display: inline-block;
+  padding: 1px 8px;
+  border-radius: 3px;
+  font-size: 0.72rem;
+  font-weight: 700;
+}
+
+.pill-required {
+  background: #ffd2d2;
+  color: #7a1414;
+}
+.pill-sse {
+  background: #c9f5d6;
+  color: #0d5026;
+}
+.pill-binary {
+  background: #fdeec0;
+  color: #6b4500;
+}
+
+.empty {
+  color: var(--hug-text-muted);
+  padding: 32px 0;
+  text-align: center;
+
+  h2 {
+    color: var(--hug-accent-soft);
+  }
+}

@@ -1,0 +1,11 @@
+{
+  "x-stub": "STUB spec — replace by running `npm run gen:fetch:mod` against a dev-profile hugmesh-mod-bff-api. The live fallback (SPECS.mod.fallback) renders the real contract at runtime.",
+  "openapi": "3.0.1",
+  "info": {
+    "title": "hugmesh-mod-bff-api",
+    "version": "0.1.0",
+    "description": "Mod BFF — stub OpenAPI spec. Real spec captured at build time via gen:fetch:mod, or loaded live from /v3/api-docs (ROLE_ADMIN in prod)."
+  },
+  "tags": [],
+  "paths": {}
+}

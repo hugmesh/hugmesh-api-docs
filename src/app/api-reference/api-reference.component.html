@@ -1,0 +1,131 @@
+@if (active) {
+  <p class="crumb">
+    {{ active.tag }} <span aria-hidden="true">·</span>
+    <code>{{ active.method.toUpperCase() }} {{ active.path }}</code>
+  </p>
+  <h2>{{ active.op?.summary || (active.method + ' ' + active.path) }}</h2>
+  <p class="hint">
+    Read-only contract for this endpoint. Switch to the Try-it-out tab to send a
+    live request.
+  </p>
+
+  @if (tagBlurb()) {
+    <p class="blurb">{{ tagBlurb() }}</p>
+  }
+
+  @if (longDesc()) {
+    <p>{{ longDesc() }}</p>
+  } @else if (active.op?.description) {
+    <p>{{ active.op.description }}</p>
+  }
+
+  @if (snap().sse) {
+    <p>
+      <span class="pill pill-sse">SSE</span> Streams via
+      <code>text/event-stream</code>. Use the Try-it-out tab to mount an
+      in-browser terminal viewer for incoming events.
+    </p>
+  }
+  @let binaryUpload = snap().binaryUpload;
+  @if (binaryUpload) {
+    <p>
+      <span class="pill pill-binary">Binary upload</span> Multipart field
+      <code>{{ binaryUpload.field }}</code>; accepts
+      <code>{{ binaryUpload.accept }}</code>.
+    </p>
+  }
+
+  @if (parameters().length) {
+    <h3>Parameters</h3>
+    <table>
+      <caption class="sr">Parameters for {{ active.method.toUpperCase() }} {{ active.path }}</caption>
+      <thead>
+        <tr>
+          <th scope="col">Name</th>
+          <th scope="col">In</th>
+          <th scope="col">Type</th>
+          <th scope="col">Description</th>
+        </tr>
+      </thead>
+      <tbody>
+        @for (p of parameters(); track p.name) {
+          <tr>
+            <td>
+              <code>{{ p.name }}</code>
+              @if (p.required) {
+                <span class="pill pill-required">required</span>
+              }
+            </td>
+            <td>{{ p.in }}</td>
+            <td><code>{{ typeOf(p) }}</code></td>
+            <td>{{ p.description || '' }}</td>
+          </tr>
+        }
+      </tbody>
+    </table>
+  }
+
+  @if (requestBody()) {
+    <h3>Request body</h3>
+    <table>
+      <caption class="sr">Request body content types</caption>
+      <thead>
+        <tr>
+          <th scope="col">Content type</th>
+          <th scope="col">Schema</th>
+        </tr>
+      </thead>
+      <tbody>
+        @for (entry of requestBodyEntries(); track entry[0]) {
+          <tr>
+            <td><code>{{ entry[0] }}</code></td>
+            <td><code>{{ schemaName(entry[1]?.schema) }}</code></td>
+          </tr>
+        }
+      </tbody>
+    </table>
+    @if (snap().sampleRequest) {
+      <h3>Sample request</h3>
+      <pre>{{ pretty(snap().sampleRequest) }}</pre>
+    }
+  }
+
+  <h3>Responses</h3>
+  <table>
+    <caption class="sr">Responses for {{ active.method.toUpperCase() }} {{ active.path }}</caption>
+    <thead>
+      <tr>
+        <th scope="col">Status</th>
+        <th scope="col">Description</th>
+        <th scope="col">Content</th>
+      </tr>
+    </thead>
+    <tbody>
+      @for (entry of responseEntries(); track entry[0]) {
+        <tr>
+          <td><code>{{ entry[0] }}</code></td>
+          <td>{{ entry[1]?.description || '' }}</td>
+          <td>
+            @for (c of contentEntries(entry[1]); track c[0]) {
+              <div><code>{{ c[0] }}</code></div>
+            }
+          </td>
+        </tr>
+      }
+    </tbody>
+  </table>
+  @if (snap().sampleResponse) {
+    <h3>Sample response</h3>
+    <pre>{{ pretty(snap().sampleResponse) }}</pre>
+  }
+  @if (snap().sampleEvent) {
+    <h3>Sample event stream</h3>
+    <pre>{{ pretty(snap().sampleEvent) }}</pre>
+  }
+} @else {
+  <div class="empty">
+    <h2>Pick an operation</h2>
+    <p>Choose a path from the navigator on the left to see its contract, sample
+       payloads, and try it out.</p>
+  </div>
+}

@@ -1,0 +1,11 @@
+{
+  "x-stub": "STUB spec — replace by running `npm run gen:fetch:federation` against a dev-profile hugmesh-federation-api. The live fallback (SPECS.federation.fallback) renders the real contract at runtime.",
+  "openapi": "3.0.1",
+  "info": {
+    "title": "hugmesh-federation-api",
+    "version": "0.1.0",
+    "description": "Federation API — stub OpenAPI spec. Real spec captured at build time via gen:fetch:federation, or loaded live from /v3/api-docs (ROLE_ADMIN in prod)."
+  },
+  "tags": [],
+  "paths": {}
+}

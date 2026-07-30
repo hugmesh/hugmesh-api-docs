@@ -1,0 +1,175 @@
+@if (!active) {
+  <div class="empty">
+    <h2>Pick an operation</h2>
+    <p>Choose a path from the navigator on the left to send a test request.</p>
+  </div>
+} @else {
+  <h2>{{ active.method.toUpperCase() }} {{ active.path }}</h2>
+
+  <h3 id="auth-heading">Authentication</h3>
+  <label for="tok">
+    Bearer token (override; preloaded from the HugMesh session)
+  </label>
+  <input
+    id="tok"
+    type="text"
+    autocomplete="off"
+    [(ngModel)]="token"
+    aria-describedby="tok-hint"
+    placeholder="eyJhbGciOiJSUzI1NiJ9..." />
+  <p id="tok-hint" class="hint">
+    In prod each service's <code>/v3/api-docs</code> and live endpoints require
+    <code>ROLE_ADMIN</code>; this token authorises the request.
+  </p>
+
+  @if (pathParams.length) {
+    <h3 id="path-params-heading">Path parameters</h3>
+    <p id="path-params-hint" class="hint">
+      These values are substituted into the URL path. All are required for the
+      request to resolve.
+    </p>
+    @for (p of pathParams; track p.name) {
+      <label [attr.for]="'p_' + p.name">
+        {{ p.name }} <small>({{ p.schema?.type || 'string' }})</small>
+      </label>
+      <input
+        [id]="'p_' + p.name"
+        type="text"
+        [attr.aria-label]="paramAccessibleName(p, 'path')"
+        [attr.aria-describedby]="p.description ? 'p_' + p.name + '_desc' : 'path-params-hint'"
+        [(ngModel)]="pathValues[p.name]"
+        [name]="'p_' + p.name" />
+      @if (p.description) {
+        <p [id]="'p_' + p.name + '_desc'" class="hint">{{ p.description }}</p>
+      }
+    }
+  }
+
+  @if (queryParams.length) {
+    <h3 id="query-params-heading">Query parameters</h3>
+    <p id="query-params-hint" class="hint">
+      Optional filters appended to the URL query string. Leave a field blank to
+      omit it from the request.
+    </p>
+    @for (q of queryParams; track q.name) {
+      <label [attr.for]="'q_' + q.name">
+        {{ q.name }} <small>({{ q.schema?.type || 'string' }})</small>
+      </label>
+      <input
+        [id]="'q_' + q.name"
+        type="text"
+        [attr.aria-label]="paramAccessibleName(q, 'query')"
+        [attr.aria-describedby]="q.description ? 'q_' + q.name + '_desc' : 'query-params-hint'"
+        [(ngModel)]="queryValues[q.name]"
+        [name]="'q_' + q.name" />
+      @if (q.description) {
+        <p [id]="'q_' + q.name + '_desc'" class="hint">{{ q.description }}</p>
+      }
+    }
+  }
+
+  @if (hasJsonBody()) {
+    <h3>Request body (JSON)</h3>
+    <label for="bodyJson" class="sr">Request body JSON</label>
+    <p id="body-hint" class="hint">
+      Enter the JSON payload to send. Pre-filled from the spec's sample request
+      when one exists; it is validated before sending.
+    </p>
+    <textarea
+      id="bodyJson"
+      [(ngModel)]="bodyJson"
+      name="bodyJson"
+      aria-label="Request body JSON"
+      [attr.aria-invalid]="bodyError() ? 'true' : null"
+      [attr.aria-describedby]="bodyError() ? 'body-hint body-error' : 'body-hint'"></textarea>
+    @if (bodyError()) {
+      <p id="body-error" class="field-error" role="alert" aria-live="assertive">
+        ⚠ {{ bodyError() }}
+      </p>
+    }
+  }
+  @let upload = binaryUpload();
+  @if (upload) {
+    <h3>Binary upload — <code>{{ upload.field }}</code></h3>
+    <p id="bin-hint" class="hint">
+      {{ upload.description }} (accepts
+      <code>{{ upload.accept }}</code>). The chosen file is sent as a
+      multipart form field named <code>{{ upload.field }}</code>.
+    </p>
+    <label for="bin" class="sr">Binary upload file</label>
+    <input
+      id="bin"
+      type="file"
+      aria-label="Binary upload file"
+      aria-describedby="bin-hint"
+      [accept]="upload.accept"
+      (change)="onFileSelected($event)" />
+  }
+
+  <div class="actions">
+    <button
+      type="button"
+      class="primary"
+      [attr.aria-label]="isSse() ? 'Subscribe to the event stream' : 'Send the request'"
+      aria-describedby="send-hint"
+      (click)="send()"
+      [disabled]="busy()">
+      {{ busy() ? 'Sending…' : (isSse() ? 'Subscribe to SSE' : 'Send request') }}
+    </button>
+    @if (isSse() && sseActive()) {
+      <button
+        type="button"
+        class="secondary"
+        aria-describedby="stop-hint"
+        (click)="stopSse()">Stop SSE</button>
+    }
+    <button
+      type="button"
+      class="secondary"
+      aria-describedby="reset-hint"
+      (click)="resetForm()">Reset</button>
+  </div>
+  <p id="send-hint" class="hint">
+    @if (isSse()) {
+      Opens a live <code>text/event-stream</code> to this endpoint using your
+      bearer token; incoming events appear in the terminal below.
+    } @else {
+      Sends a live request to this endpoint with the fields above and shows the
+      status, timing, and response body.
+    }
+  </p>
+  @if (isSse() && sseActive()) {
+    <p id="stop-hint" class="hint">Closes the open event stream.</p>
+  }
+  <p id="reset-hint" class="hint">
+    Clears the parameters, body, and last response for this operation.
+  </p>
+
+  @if (isSse()) {
+    <h3 id="sse-heading">SSE terminal</h3>
+    <div
+      #term
+      class="terminal"
+      role="log"
+      aria-live="polite"
+      aria-labelledby="sse-heading">{{ sseLog() }}</div>
+  }
+
+  @if (response() || responseError()) {
+    <h3>Response</h3>
+    <div class="response" role="status" aria-live="polite">
+      @if (responseError()) {
+        <p>
+          <span class="status s5xx">ERROR</span>
+          {{ responseError() }}
+        </p>
+      } @else if (response()) {
+        <p>
+          <span class="status" [class]="statusClass()">{{ response()!.status }}</span>
+          {{ response()!.statusText }} — {{ response()!.duration }} ms
+        </p>
+        <pre>{{ response()!.body }}</pre>
+      }
+    </div>
+  }
+}

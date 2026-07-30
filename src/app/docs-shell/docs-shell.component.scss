@@ -1,0 +1,235 @@
+// DocsShell layout — adapted from the games api-docs but re-themed onto the
+// HugMesh brand --hug-* custom properties (WCAG-AA palette from styles.scss)
+// instead of the games' hardcoded light-mode hex.
+:host {
+  display: flex;
+  height: 100%;
+  min-height: 560px;
+  color: var(--hug-text);
+  background: var(--hug-bg-0);
+}
+
+.nav {
+  width: 300px;
+  flex: 0 0 300px;
+  border-right: 1px solid var(--hug-border);
+  overflow-y: auto;
+  background: var(--hug-bg-1);
+}
+
+.nav h2 {
+  font-size: 0.78rem;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: var(--hug-accent-soft);
+  padding: 14px 18px 4px;
+  margin: 0;
+}
+
+.picker {
+  padding: 6px 18px 12px;
+
+  label {
+    display: block;
+    font-size: 0.72rem;
+    color: var(--hug-text-muted);
+    font-weight: 600;
+    margin-bottom: 4px;
+  }
+
+  select {
+    width: 100%;
+    padding: 6px 8px;
+    border: 1px solid var(--hug-border);
+    border-radius: 4px;
+    background: var(--hug-bg-2);
+    color: var(--hug-text);
+    font-size: 0.88rem;
+  }
+}
+
+// Visible inline help text. Uses the AAA --hug-text-muted token (8.77:1) so it
+// stays legible at high zoom + under prefers-contrast, and scales with the
+// rem-based type so a user can enlarge it. Never the only signal — it sits
+// beside a labelled control and is wired to it via aria-describedby.
+.hint {
+  font-size: 0.78rem;
+  color: var(--hug-text-muted);
+  line-height: 1.45;
+  margin: 4px 0 0;
+}
+
+.nav-hint {
+  padding: 0 18px 10px;
+}
+
+.tabs-hint {
+  padding: 6px 22px 0;
+}
+
+.tag-group {
+  padding: 0 0 8px;
+}
+
+.tag-name {
+  margin: 0;
+  padding: 10px 18px 4px;
+  font-weight: 700;
+  color: var(--hug-accent-soft);
+  font-size: 0.92rem;
+}
+
+.op-list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+}
+
+button.op {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  width: 100%;
+  text-align: left;
+  padding: 6px 18px;
+  border: 0;
+  background: transparent;
+  cursor: pointer;
+  color: var(--hug-text);
+  font-family: inherit;
+  font-size: 0.86rem;
+
+  &:hover {
+    background: rgba(124, 77, 255, 0.18);
+  }
+
+  &.active {
+    background: rgba(124, 77, 255, 0.32);
+    color: var(--hug-text);
+    font-weight: 600;
+  }
+}
+
+.op-path {
+  overflow-wrap: anywhere;
+}
+
+.method {
+  display: inline-block;
+  min-width: 48px;
+  text-align: center;
+  padding: 1px 6px;
+  border-radius: 3px;
+  font-size: 0.7rem;
+  font-weight: 700;
+  letter-spacing: 0.04em;
+}
+
+// Method badges keep a strong contrast (dark ink on a light tint) so they read
+// as semantic chips regardless of the surrounding dark theme.
+.method-get {
+  background: #cfe8ff;
+  color: #0b3d66;
+}
+.method-post {
+  background: #c9f5d6;
+  color: #0d5026;
+}
+.method-put {
+  background: #fdeec0;
+  color: #6b4500;
+}
+.method-delete {
+  background: #ffd2d2;
+  color: #7a1414;
+}
+.method-patch {
+  background: #ecd6ff;
+  color: #4a1772;
+}
+
+.pane {
+  flex: 1 1 auto;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+}
+
+.header {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  flex-wrap: wrap;
+  gap: 8px;
+  padding: 16px 22px;
+  border-bottom: 1px solid var(--hug-border);
+  background: var(--hug-bg-1);
+
+  h1 {
+    margin: 0;
+    font-size: 1.3rem;
+    font-weight: 800;
+    color: var(--hug-accent-soft);
+  }
+
+  .meta {
+    margin: 0;
+    display: flex;
+    gap: 6px;
+    font-size: 0.78rem;
+    color: var(--hug-text-muted);
+  }
+}
+
+.tabs {
+  display: flex;
+  gap: 0;
+  border-bottom: 1px solid var(--hug-border);
+  background: var(--hug-bg-1);
+  padding: 0 16px;
+
+  button {
+    border: 0;
+    background: transparent;
+    padding: 10px 14px;
+    font-family: inherit;
+    font-size: 0.88rem;
+    font-weight: 600;
+    color: var(--hug-text-muted);
+    cursor: pointer;
+    border-bottom: 2px solid transparent;
+
+    &.active {
+      color: var(--hug-accent-soft);
+      border-bottom-color: var(--hug-accent);
+    }
+  }
+}
+
+.body {
+  flex: 1 1 auto;
+  overflow: auto;
+  padding: 20px 22px;
+
+  &:focus {
+    outline: none;
+  }
+}
+
+.err {
+  background: rgba(255, 107, 107, 0.12);
+  color: var(--hug-error);
+  border: 1px solid var(--hug-error);
+  border-radius: 6px;
+  padding: 14px 16px;
+  font-size: 0.88rem;
+  margin: 14px 22px;
+  font-weight: 600;
+}
+
+.loading {
+  padding: 24px 18px;
+  color: var(--hug-text-muted);
+  font-style: italic;
+}

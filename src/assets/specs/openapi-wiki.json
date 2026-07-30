@@ -1,0 +1,11 @@
+{
+  "x-stub": "STUB spec — replace by running `npm run gen:fetch:wiki` against a dev-profile hugmesh-wiki-bff-api (port 8080). The live fallback (SPECS.wiki.fallback) renders the real contract at runtime.",
+  "openapi": "3.0.1",
+  "info": {
+    "title": "HugMesh Wiki BFF API",
+    "version": "0.0.1",
+    "description": "HugMesh Wiki BFF — stub OpenAPI spec. Real spec captured at build time via gen:fetch:wiki, or loaded live from /v3/api-docs (ROLE_ADMIN in prod)."
+  },
+  "tags": [],
+  "paths": {}
+}

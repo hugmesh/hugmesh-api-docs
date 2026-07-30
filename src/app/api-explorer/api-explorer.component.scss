@@ -1,0 +1,150 @@
+// Interactive try-it-out — re-themed from the games light-mode hex onto the
+// HugMesh brand --hug-* dark palette.
+:host {
+  display: block;
+  max-width: 960px;
+}
+
+h2 {
+  color: var(--hug-accent-soft);
+  font-size: 1.2rem;
+  margin: 0 0 6px;
+}
+
+h3 {
+  color: var(--hug-accent-soft);
+  font-size: 0.95rem;
+  margin: 14px 0 4px;
+}
+
+label {
+  display: block;
+  font-size: 0.78rem;
+  color: var(--hug-text-muted);
+  font-weight: 600;
+  margin: 6px 0 2px;
+}
+
+.hint {
+  font-size: 0.78rem;
+  color: var(--hug-text-muted);
+  margin: 4px 0 0;
+}
+
+input[type='text'],
+input[type='password'],
+textarea {
+  width: 100%;
+  padding: 6px 8px;
+  border: 1px solid var(--hug-border);
+  border-radius: 4px;
+  font-family: ui-monospace, 'JetBrains Mono', 'Consolas', monospace;
+  font-size: 0.86rem;
+  background: var(--hug-bg-1);
+  color: var(--hug-text);
+}
+
+textarea {
+  min-height: 140px;
+  resize: vertical;
+}
+
+input[type='file'] {
+  font-family: inherit;
+  color: var(--hug-text);
+}
+
+button.primary {
+  background: var(--hug-accent);
+  color: #ffffff;
+  border: 0;
+  border-radius: 4px;
+  padding: 8px 18px;
+  font-weight: 700;
+  cursor: pointer;
+  font-family: inherit;
+
+  &:hover {
+    filter: brightness(1.1);
+  }
+
+  &:disabled {
+    opacity: 0.6;
+    cursor: not-allowed;
+  }
+}
+
+button.secondary {
+  background: var(--hug-bg-2);
+  color: var(--hug-accent-soft);
+  border: 1px solid var(--hug-border);
+  border-radius: 4px;
+  padding: 6px 14px;
+  cursor: pointer;
+  font-family: inherit;
+}
+
+.actions {
+  display: flex;
+  gap: 8px;
+  margin-top: 12px;
+  flex-wrap: wrap;
+}
+
+.status {
+  display: inline-block;
+  padding: 2px 8px;
+  border-radius: 3px;
+  font-weight: 700;
+  font-size: 0.82rem;
+  font-family: ui-monospace, 'JetBrains Mono', monospace;
+}
+
+.s2xx {
+  background: #c9f5d6;
+  color: #0d5026;
+}
+.s4xx {
+  background: #fdeec0;
+  color: #6b4500;
+}
+.s5xx {
+  background: #ffd2d2;
+  color: #7a1414;
+}
+
+.terminal {
+  background: var(--hug-bg-0);
+  color: var(--hug-text);
+  border-radius: 6px;
+  padding: 12px 14px;
+  font-family: ui-monospace, 'JetBrains Mono', 'Fira Code', 'Consolas', monospace;
+  font-size: 0.82rem;
+  line-height: 1.5;
+  height: 280px;
+  overflow: auto;
+  white-space: pre-wrap;
+  border: 1px solid var(--hug-accent);
+}
+
+.response pre {
+  background: var(--hug-bg-1);
+  border: 1px solid var(--hug-border);
+  border-radius: 6px;
+  padding: 10px 14px;
+  overflow: auto;
+  color: var(--hug-text);
+  font-family: ui-monospace, 'JetBrains Mono', 'Consolas', monospace;
+  font-size: 0.84rem;
+  max-height: 340px;
+}
+
+.empty {
+  color: var(--hug-text-muted);
+  padding: 32px 0;
+  text-align: center;
+
+  h2 {
+    color: var(--hug-accent-soft);
+  }
+}

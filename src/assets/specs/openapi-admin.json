@@ -1,0 +1,11 @@
+{
+  "x-stub": "STUB spec — replace by running `npm run gen:fetch:admin` against a dev-profile hugmesh-admin-bff-api (/v3/api-docs is permitAll in dev/test). The live fallback (SPECS.admin.fallback) renders the real contract at runtime.",
+  "openapi": "3.0.1",
+  "info": {
+    "title": "hugmesh-admin-bff-api",
+    "version": "0.1.0",
+    "description": "Admin BFF — stub OpenAPI spec. Real spec captured at build time via gen:fetch:admin, or loaded live from /v3/api-docs (ROLE_ADMIN in prod)."
+  },
+  "tags": [],
+  "paths": {}
+}

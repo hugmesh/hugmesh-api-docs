@@ -1,0 +1,11 @@
+{
+  "x-stub": "STUB spec — replace by running `npm run gen:fetch:user` against a dev-profile hugmesh-user-bff-api. The live fallback (SPECS.user.fallback) renders the real contract at runtime.",
+  "openapi": "3.0.1",
+  "info": {
+    "title": "hugmesh-user-bff-api",
+    "version": "0.1.0",
+    "description": "User BFF — stub OpenAPI spec. Real spec captured at build time via gen:fetch:user, or loaded live from /v3/api-docs (ROLE_ADMIN in prod)."
+  },
+  "tags": [],
+  "paths": {}
+}
