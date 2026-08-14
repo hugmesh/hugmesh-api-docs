@@ -8,7 +8,7 @@
  * read-only reference AND an interactive try-it-out form (with an SSE terminal
  * for streaming operations).
  *
- * Mounted at /admin/docs in the hugmesh.systems host (adminGuard). Standalone
+ * Mounted at /admin/docs in the hugmesh.net host (adminGuard). Standalone
  * — no Angular module required. Consumed by federation as './DocsShell' (and as
  * the path-'' component of API_DOCS_ROUTES via './routes').
  *

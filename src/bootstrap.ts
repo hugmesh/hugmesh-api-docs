@@ -5,7 +5,7 @@ import { AppComponent } from './app/app.component';
 import { routes } from './app/app.routes';
 
 // The standalone dev shell needs HttpClient because DocsShell fetches the
-// OpenAPI spec. When federated into the hugmesh.systems host, the host
+// OpenAPI spec. When federated into the hugmesh.net host, the host
 // provides HttpClient app-wide; this only covers `ng serve api-docs`.
 bootstrapApplication(AppComponent, {
   providers: [provideRouter(routes), provideHttpClient()],

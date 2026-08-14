@@ -1,7 +1,7 @@
 {
   "name": "@hugmesh/api-docs",
   "version": "0.1.0",
-  "description": "Admin-gated federated remote: browse the platform OpenAPI specs (admin/mod/user BFFs, federation-api, actions). Angular micro-frontend (native-federation remote) for the hugmesh.systems host. Reuses the hugmesh.games api-docs ecosystem.",
+  "description": "Admin-gated federated remote: browse the platform OpenAPI specs (admin/mod/user BFFs, federation-api, actions). Angular micro-frontend (native-federation remote) for the hugmesh.net host. Reuses the hugmesh.games api-docs ecosystem.",
   "license": "MIT",
   "private": true,
   "scripts": {

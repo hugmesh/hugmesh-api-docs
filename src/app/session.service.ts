@@ -43,7 +43,7 @@ export interface SnapSession {
 
 /**
  * Singleton service that owns the logged-in session for the entire
- * hugmesh.systems micro-frontend mesh.
+ * hugmesh.net micro-frontend mesh.
  *
  * The session is persisted as JSON in `localStorage['hug.session']` so it
  * survives page refreshes. Because each native-federation remote instantiates

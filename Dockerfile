@@ -1,6 +1,6 @@
 # hugmesh-api-docs — builds the api-docs native-federation REMOTE
 # (src → dist/api-docs) and serves it via nginx with CORS so the
-# hugmesh.systems host can fetch its remoteEntry.json cross-origin.
+# hugmesh.net host can fetch its remoteEntry.json cross-origin.
 # Deployed to the hugmesh-frontend namespace, fronted by the fe-gateway at
 # /admin/docs. Casdoor-admin-role guarded by the host (defense in depth:
 # each service's springdoc /v3/api-docs is also ROLE_ADMIN-gated in prod).
