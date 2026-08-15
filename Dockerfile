@@ -10,7 +10,18 @@ WORKDIR /app
 COPY package*.json ./
 RUN npm ci
 COPY . .
-RUN npm run build:api-docs
+# --base-href IS REQUIRED and its absence is silent. The fe-gateway routes
+# `/api-docs/**` here (specs/cluster/apps/20-gateway-fe.yaml:258), so every asset and
+# lazy chunk this bundle requests must resolve under /api-docs/. Without the flag Angular
+# writes `<base href="/">` and the remote 404s its own chunks the moment it is loaded
+# through the gateway -- while continuing to work perfectly when served directly, which
+# is what makes this class of bug survive.
+#
+# NOT the same path the shell MOUNTS it at. The host shell exposes the route as
+# /admin/docs (deliberately, so it cannot collide with the gateway prefix -- see the same
+# gateway file at :177); the base href is about where the BYTES are fetched from, not
+# where the route appears in the URL bar.
+RUN npm run build:api-docs -- --base-href=/api-docs/
 
 FROM nginx:1.27-alpine
 COPY nginx.conf /etc/nginx/conf.d/default.conf
