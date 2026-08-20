@@ -7,8 +7,13 @@
   <h2>{{ active.method.toUpperCase() }} {{ active.path }}</h2>
 
   <h3 id="auth-heading">Authentication</h3>
+  <p class="hint">
+    Requests are sent with your HugMesh session cookie, which is what authorises
+    the <code>ROLE_ADMIN</code>-gated <code>/v3/api-docs</code> and live
+    endpoints. Leave the override below empty unless you need a specific token.
+  </p>
   <label for="tok">
-    Bearer token (override; preloaded from the HugMesh session)
+    Bearer token (optional manual override)
   </label>
   <input
     id="tok"
@@ -18,8 +23,8 @@
     aria-describedby="tok-hint"
     placeholder="eyJhbGciOiJSUzI1NiJ9..." />
   <p id="tok-hint" class="hint">
-    In prod each service's <code>/v3/api-docs</code> and live endpoints require
-    <code>ROLE_ADMIN</code>; this token authorises the request.
+    Only for signing in as someone else or probing another environment. Setting
+    it replaces the session cookie for this request rather than adding to it.
   </p>
 
   @if (pathParams.length) {
@@ -132,7 +137,7 @@
   <p id="send-hint" class="hint">
     @if (isSse()) {
       Opens a live <code>text/event-stream</code> to this endpoint using your
-      bearer token; incoming events appear in the terminal below.
+      session; incoming events appear in the terminal below.
     } @else {
       Sends a live request to this endpoint with the fields above and shows the
       status, timing, and response body.

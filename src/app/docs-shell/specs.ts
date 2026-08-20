@@ -10,8 +10,9 @@
  *              committed STUB (info + empty paths) so the build is green and the
  *              picker renders before a real capture lands.
  * `fallback` — the LIVE /v3/api-docs reachable through the host/gateway proxy.
- *              Works in dev/test (permitAll); in prod it requires the admin's
- *              bearer token, which ApiExplorer injects from the session. The
+ *              Works in dev/test (permitAll); in prod it requires ROLE_ADMIN,
+ *              carried by the session cookie that the HttpClient credentials
+ *              interceptor attaches to this request. The
  *              gateway per-service proxy prefix is a documented host follow-up
  *              (the be-gateway currently has a single catch-all, not a
  *              per-service /v3/api-docs fan-out), so the prefix below is the

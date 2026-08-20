@@ -3,15 +3,22 @@
  * Shown on the "Try it out" tab of DocsShellComponent.
  *
  * Features:
- *   • Auth-token override textbox. Preloaded from the shared HugMesh session
- *     (localStorage `hug.session` → bffToken) with a legacy fallback to the
- *     games `tw_auth` shape, so the admin's bearer token authorises the prod
- *     ROLE_ADMIN-gated /v3/api-docs + the live try-it-out call.
+ *   • Session-cookie auth. Live requests ride the platform's httpOnly `bff_`
+ *     session cookie (`credentials: 'include'`, the same convention as the
+ *     host shell's bearer interceptor and the login-ui raw-fetch call sites);
+ *     the gateway's BffCookieToBearerWebFilter exchanges it for the upstream
+ *     bearer SERVER-SIDE, so the browser never holds a JWT.
+ *   • Auth-token override textbox. Empty by default and purely MANUAL — for
+ *     pasting a token when there is no session cookie (e.g. probing another
+ *     environment). Because the gateway's cookie bridge only fires when NO
+ *     `Authorization` header is present, a non-empty override deliberately
+ *     SUPPRESSES the cookie exchange; leaving it blank is the normal path.
  *   • Path / query parameter form, defaulted from the spec.
  *   • Request-body editor (JSON for application/json, file picker for a
  *     multipart binary field).
  *   • Sample request preload from x-hugmesh.sampleRequest.
- *   • Fetch-based "Send" that respects the override token.
+ *   • Fetch-based "Send" that sends the session cookie and respects the
+ *     override token when one has been typed.
  *   • Live response panel: status, headers, body (JSON pretty-printed).
  *   • Terminal-styled SSE viewer for endpoints with x-hugmesh.sse (or a
  *     text/event-stream response). Opens a fetch-stream and appends incoming
@@ -79,7 +86,12 @@ export class ApiExplorerComponent implements OnChanges {
   /** Template reference to the SSE terminal `<div role="log">` for auto-scroll. */
   @ViewChild('term') termEl?: ElementRef<HTMLElement>;
 
-  /** Bearer token shown in the auth override textbox, pre-filled from session. */
+  /**
+   * Manual bearer override typed into the auth textbox. Empty by default —
+   * the session cookie authorises the request — and deliberately PRESERVED
+   * across operation switches so a pasted token survives navigating the
+   * sidebar.
+   */
   token = '';
   /** Current values for each `{param}` path placeholder, keyed by parameter name. */
   pathValues: ParamMap = {};
@@ -131,36 +143,18 @@ export class ApiExplorerComponent implements OnChanges {
    * Resets the form and pre-fills state whenever the active operation changes.
    * If the spec carries an `x-hugmesh.sampleRequest` for this operation,
    * that object is serialised into the body editor as pretty JSON.
+   *
+   * `token` is intentionally NOT touched here: it is a manual override, so
+   * wiping it on every sidebar click would discard what the user just pasted.
    */
   ngOnChanges(): void {
     if (!this.active) return;
     this.resetForm();
-    this.token = this.readSessionToken();
     const sample = this.active.op?.['x-hugmesh']?.sampleRequest;
     // Pre-fill the body editor with the committed sample request when available.
     if (sample && this.hasJsonBody()) {
       this.bodyJson = JSON.stringify(sample, null, 2);
     }
-  }
-
-  /** Preload the bearer token from the shared session, with a legacy fallback. */
-  private readSessionToken(): string {
-    try {
-      const snap = localStorage.getItem('hug.session');
-      if (snap) {
-        const parsed = JSON.parse(snap);
-        if (parsed?.bffToken) return parsed.bffToken;
-      }
-    } catch {
-      /* tab without localStorage access — ignore */
-    }
-    try {
-      const raw = localStorage.getItem('tw_auth');
-      if (raw) return JSON.parse(raw)?.accessToken || '';
-    } catch {
-      /* ignore */
-    }
-    return '';
   }
 
   /**
@@ -256,7 +250,8 @@ export class ApiExplorerComponent implements OnChanges {
   /**
    * Initiates the request for the active operation.
    * SSE operations are routed to `startSse`; all other HTTP methods are
-   * dispatched via `fetch` with the bearer token and any body attached.
+   * dispatched via `fetch` with the session cookie, any manual bearer
+   * override, and any body attached.
    */
   send(): void {
     if (this.isSse()) {
@@ -273,6 +268,11 @@ export class ApiExplorerComponent implements OnChanges {
     const init: RequestInit = {
       method: this.active!.method.toUpperCase(),
       headers: this.buildHeaders(),
+      // Ride the platform session: the httpOnly `bff_` cookie is what
+      // authorises the ROLE_ADMIN-gated endpoints. Explicit rather than
+      // relying on fetch's `same-origin` default, so the call still carries
+      // the session if the explorer is ever pointed at a cross-origin gateway.
+      credentials: 'include',
     };
     const upload = this.binaryUpload();
     if (upload && this.selectedFile) {
@@ -320,7 +320,8 @@ export class ApiExplorerComponent implements OnChanges {
    *
    * Flow:
    * 1. Aborts any existing SSE connection so only one stream is open at a time.
-   * 2. Sends a `fetch` with `Accept: text/event-stream` and the bearer token.
+   * 2. Sends a `fetch` with `Accept: text/event-stream`, the session cookie,
+   *    and any manual bearer override.
    * 3. Reads the response body with a `ReadableStreamDefaultReader`, buffering
    *    UTF-8 text until double-newline (`\n\n`) event boundaries are found.
    * 4. Each complete SSE chunk is appended to `sseLog` via `appendLog`.
@@ -339,6 +340,8 @@ export class ApiExplorerComponent implements OnChanges {
     const url = this.buildUrl();
     fetch(url, {
       headers: { ...this.buildHeaders(), Accept: 'text/event-stream' },
+      // Same session-cookie contract as `send` — see the note there.
+      credentials: 'include',
       signal: this.sseAbort.signal,
     })
       .then(async (r) => {
@@ -423,8 +426,11 @@ export class ApiExplorerComponent implements OnChanges {
   }
 
   /**
-   * Builds the request headers object. Includes an `Authorization: Bearer`
-   * header when a token is present in the auth override textbox.
+   * Builds the request headers object. Adds an `Authorization: Bearer` header
+   * ONLY when the user has typed a manual override; otherwise the header is
+   * omitted so the gateway's cookie-to-bearer bridge (which stands down as
+   * soon as an `Authorization` header is present) can exchange the `bff_`
+   * session cookie server-side.
    *
    * @returns A plain object of header name → value pairs.
    */
