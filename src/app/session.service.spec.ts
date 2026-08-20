@@ -7,7 +7,6 @@ function makeSession(over: Partial<SnapSession> = {}): SnapSession {
     label: 'alice@gmail.com',
     provider: 'google',
     roles: [],
-    bffToken: 'tok-1',
     registrationComplete: false,
     matrix: null,
     mastodon: null,
@@ -67,7 +66,7 @@ describe('SessionService', () => {
     service.patch({ registrationComplete: true });
     expect(service.isAdmin()).toBeTrue();
     expect(service.fullyRegistered()).toBeTrue();
-    expect(service.session()!.bffToken).toBe('tok-1');
+    expect(service.session()!.label).toBe('alice@gmail.com');
   });
 
   it('patch() is a no-op when there is no session', () => {

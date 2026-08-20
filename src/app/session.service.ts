@@ -6,6 +6,10 @@ import { Injectable, signal, computed } from '@angular/core';
  * flow (login-ui POSTing credentials to a user-bff `/bff/login`-style
  * endpoint, validated against Casdoor server-side rather than a browser
  * redirect through Casdoor) completes and registration is confirmed.
+ *
+ * Carries identity/authorization METADATA only — never a token. The session
+ * secret lives solely in the httpOnly `bff_` cookie, which JavaScript cannot
+ * read; the gateway exchanges it for the upstream bearer server-side.
  */
 export interface SnapSession {
   /** Casdoor-qualified identity string, e.g. `google:alice@gmail.com`. */
@@ -16,19 +20,6 @@ export interface SnapSession {
   provider: 'google' | 'discord';
   /** Casdoor role names assigned to this user, e.g. `['admin']`. */
   roles: string[];
-  /**
-   * Bearer token issued by the BFF for API calls that require authentication.
-   * Injected into the Try-it-out bearer-token override by
-   * `ApiExplorerComponent.readSessionToken` so the interactive request
-   * builder (this remote's own OpenAPI navigator, not Swagger UI) can reach
-   * ROLE_ADMIN-gated endpoints.
-   *
-   * TODO: confirm this is still populated under native login — the
-   * platform's httpOnly `bff_` session cookie isn't client-readable, and
-   * other HugMesh frontends had to drop an equivalent field for that
-   * reason (see README's "Known Gaps" section).
-   */
-  bffToken: string;
   /**
    * Set to `true` once the post-SSO registration flow (username, acceptance of
    * terms, etc.) has finished. Guards the Matrix and Mastodon micro-frontends:

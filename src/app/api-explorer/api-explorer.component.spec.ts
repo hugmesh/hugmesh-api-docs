@@ -2,9 +2,9 @@ import { ComponentFixture, TestBed } from '@angular/core/testing';
 import { ApiExplorerComponent } from './api-explorer.component';
 
 /**
- * ApiExplorerComponent specs pin the try-it-out behaviour: token preload from
- * the shared session, URL building with path/query substitution, JSON-body
- * validation, SSE detection + start/stop, and the a11y form surface.
+ * ApiExplorerComponent specs pin the try-it-out behaviour: session-cookie auth
+ * with a manual bearer override, URL building with path/query substitution,
+ * JSON-body validation, SSE detection + start/stop, and the a11y form surface.
  */
 describe('ApiExplorerComponent', () => {
   let fixture: ComponentFixture<ApiExplorerComponent>;
@@ -39,18 +39,67 @@ describe('ApiExplorerComponent', () => {
     expect(component).toBeTruthy();
   });
 
-  it('preloads the bearer token from the shared hug.session bffToken', () => {
+  /**
+   * The browser holds ONLY the opaque httpOnly `bff_` cookie — never a JWT — so
+   * there is nothing in localStorage to preload. Reading one back would be worse
+   * than useless: the gateway's BffCookieToBearerWebFilter stands down as soon as
+   * an `Authorization` header is present, so a stale token would SUPPRESS the
+   * cookie exchange and 401 a perfectly good session.
+   */
+  it('leaves the override empty rather than preloading a token from localStorage', () => {
     localStorage.setItem('hug.session', JSON.stringify({ bffToken: 'admin-jwt-123' }));
-    component.active = op;
-    component.ngOnChanges();
-    expect(component.token).toBe('admin-jwt-123');
-  });
-
-  it('falls back to the legacy tw_auth accessToken shape', () => {
     localStorage.setItem('tw_auth', JSON.stringify({ accessToken: 'legacy-tok' }));
     component.active = op;
     component.ngOnChanges();
-    expect(component.token).toBe('legacy-tok');
+    expect(component.token).toBe('');
+  });
+
+  it('sends the session cookie and NO Authorization header when the override is empty', async () => {
+    const fetchSpy = spyOn(window, 'fetch').and.resolveTo(
+      new Response('{}', { status: 200, headers: { 'content-type': 'application/json' } }),
+    );
+    component.active = op;
+    component.ngOnChanges();
+    component.send();
+    const [, init] = fetchSpy.calls.mostRecent().args as [string, RequestInit];
+    expect(init.credentials).toBe('include');
+    expect((init.headers as Record<string, string>)['Authorization']).toBeUndefined();
+  });
+
+  it('sends a manually pasted override as a bearer header, still with credentials', () => {
+    const fetchSpy = spyOn(window, 'fetch').and.resolveTo(new Response('{}', { status: 200 }));
+    component.active = op;
+    component.ngOnChanges();
+    component.token = 'pasted-tok';
+    component.send();
+    const [, init] = fetchSpy.calls.mostRecent().args as [string, RequestInit];
+    expect((init.headers as Record<string, string>)['Authorization']).toBe('Bearer pasted-tok');
+    expect(init.credentials).toBe('include');
+  });
+
+  /**
+   * Regression: `ngOnChanges` used to overwrite `token` on every operation
+   * switch, so a manually pasted override was silently wiped by a sidebar click.
+   */
+  it('preserves a pasted override across an operation switch', () => {
+    component.active = op;
+    component.ngOnChanges();
+    component.token = 'pasted-tok';
+    component.active = { ...op, path: '/bff/admin/other' };
+    component.ngOnChanges();
+    expect(component.token).toBe('pasted-tok');
+  });
+
+  it('opens the SSE stream with the session cookie', () => {
+    const fetchSpy = spyOn(window, 'fetch').and.resolveTo({
+      ok: true,
+      body: { getReader: () => ({ read: () => new Promise(() => {}) }) },
+    } as unknown as Response);
+    component.active = { ...op, op: { 'x-hugmesh': { sse: true }, responses: {} } };
+    component.ngOnChanges();
+    component.send();
+    const [, init] = fetchSpy.calls.mostRecent().args as [string, RequestInit];
+    expect(init.credentials).toBe('include');
   });
 
   it('substitutes path params and appends non-empty query params in buildUrl', () => {
