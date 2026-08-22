@@ -1,6 +1,6 @@
 # hugmesh-api-docs
 
-An admin-gated API documentation browser for [HugMesh](https://github.com/hugmesh-net) — an
+An admin-gated API documentation browser for [HugMesh](https://github.com/hugmesh) — an
 Angular native-federation remote built on a custom OpenAPI navigator (not a generic Swagger UI).
 
 ## Highlights
