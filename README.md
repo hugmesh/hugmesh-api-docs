@@ -44,10 +44,32 @@ The Dockerfile builds a `node:24-alpine` build stage and serves the compiled bun
 `nginx:1.27-alpine`, with CORS enabled so a host shell can fetch `remoteEntry.json` cross-origin,
 and a `/healthz` endpoint for readiness probes.
 
+## Security scanning
+
+The pipeline carries the platform's standard OWASP pen-test stage, pulled from the generator
+(`tests/pentest/ci/pentest-stage.gitlab-ci.yml`) so there is one source of truth for every
+onboarded repo:
+
+| job | what it does |
+| --- | --- |
+| `pentest:sca` | OWASP Dependency-Check over this repo's own manifests, `--failOnCVSS 7`, SARIF into the MR security widget. |
+| `pentest:dast` | Authenticated ZAP baseline + custom probes + the committed nuclei boundary templates, via the shared harness. |
+
+Both are `allow_failure: true` **by design** — a finding must never red an onboarded repo's
+pipeline; findings land in the archived `out/pentest` scorecard and SARIF for triage. An *absent*
+scan is not a finding, though, which is the trap this repo is wired to avoid: the harness runs from
+the including repo's checkout, so `pentest:dast` **fetches** it from the generator at CI time
+(depth-1 clone of the same `main` the `include:` pins) rather than assuming a `tests/pentest/` this
+repo does not have. `lint:ci-wiring` asserts that reachability on every push, and mutation-tests
+itself so a green tick means the assertion can actually fail:
+
+```sh
+npm run check:ci-wiring   # assert this repo's pen-test wiring is not inert
+npm run test:ci-wiring    # ...and prove the guard detects each way of breaking it
+```
+
 ## Roadmap
 
-- Bring this remote's build pipeline in line with the platform's standard security-scanning stages
-  (currently build-only).
 - Grow the set of committed example specs as backend services publish real OpenAPI captures.
 
 ## License

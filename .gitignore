@@ -11,3 +11,9 @@
 # convention). The committed per-service specs under src/assets/specs/ stay.
 /src/app/api
 /openapi.json
+
+# Pen-test stage scratch. The DAST job fetches the shared harness from the
+# generator into .pentest-harness/ at CI time (it is deliberately NOT vendored)
+# and writes its scorecard/SARIF to out/pentest/, which CI archives.
+/.pentest-harness
+/out

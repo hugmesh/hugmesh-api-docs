@@ -11,6 +11,8 @@
     "build:api-docs": "ng build api-docs",
     "test": "ng test api-docs --watch=false --browsers=ChromeHeadlessCI",
     "test:watch": "ng test api-docs",
+    "check:ci-wiring": "bash scripts/check-ci-wiring.sh",
+    "test:ci-wiring": "bash scripts/check-ci-wiring.test.sh",
     "gen": "ng-openapi-gen --config ng-openapi-gen.json",
     "gen:fetch:admin": "curl -sf http://localhost:8080/v3/api-docs -o src/assets/specs/openapi-admin.json",
     "gen:fetch:mod": "curl -sf http://localhost:8080/v3/api-docs -o src/assets/specs/openapi-mod.json",
