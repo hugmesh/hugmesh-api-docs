@@ -133,6 +133,16 @@ mutate "give a job an undeclared stage" '
   { sub(/^  stage: lint$/, "  stage: security"); print }
 '
 
+# The pen-test jobs' `needs: []` is load-bearing: without it, stage ordering puts
+# them behind build:image, which is not allow_failure, so a failed image build on
+# the default branch deletes both security jobs from the pipeline.
+mutate "remove needs: [] from the pen-test jobs (a failed build then deletes the scan)" '
+  /^pentest:(sca|dast):/ { inblk = 1 }
+  inblk && /^[^ \t#]/ && !/^pentest:(sca|dast):/ { inblk = 0 }
+  inblk && /^  needs: \[\]$/ { next }
+  { print }
+'
+
 # --- leg 4: positive control for the VENDORED branch -------------------------
 # The guard must accept the other legitimate shape (harness vendored at the
 # template's default path, no PENTEST_HARNESS_DIR override), or it is not a
@@ -163,6 +173,26 @@ if bash "$GUARD" "${NOVEND}/.gitlab-ci.yml" "$NOVEND" >/dev/null 2>&1; then
   report fail "no PENTEST_HARNESS_DIR and no vendored harness was accepted — the inert case"
 else
   report pass "no override + no vendored harness is rejected (negative control)"
+fi
+
+# --- leg 6: positive control for check 8 -------------------------------------
+# `needs:` is one of TWO ways to be ungated; the other is having nothing that can
+# fail run earlier. Without this control, check 8 would just be "grep for needs:"
+# and would wrongly red a repo whose pen-test stage genuinely runs first.
+UNGATED="${WORK}/ungated"
+mkdir -p "$UNGATED"
+awk '
+  { sub(/^stages: \[lint, build, pentest\]$/, "stages: [pentest, lint, build]") }
+  /^  needs: \[\]$/ { next }
+  { print }
+' "$REAL_CI" > "${UNGATED}/.gitlab-ci.yml"
+if cmp -s "$REAL_CI" "${UNGATED}/.gitlab-ci.yml"; then
+  report fail "ungated-shape control did not change the file"
+elif bash "$GUARD" "${UNGATED}/.gitlab-ci.yml" "$UNGATED" >"${UNGATED}/out.log" 2>&1; then
+  report pass "pen-test stage running first, with no needs:, is accepted (positive control)"
+else
+  report fail "a pen-test stage that nothing precedes was rejected — check 8 is over-fitted to needs:"
+  cat "${UNGATED}/out.log" >&2
 fi
 
 printf '\n%d passed, %d failed\n' "$PASS" "$FAIL"

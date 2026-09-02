@@ -185,6 +185,68 @@ while read -r used; do
 done <<< "$(code_only | sed -n 's/^[[:space:]]\{1,\}stage:[[:space:]]*//p' | sort -u)"
 [ "$UNDECLARED" -eq 0 ] && ok "every job's stage: is declared in stages:"
 
+# -- 8. the pen-test jobs are not gated behind a blocking earlier stage --------
+# Stage ordering is itself a gate: `pentest` runs only if every earlier stage
+# SUCCEEDS. build:image is (correctly) not allow_failure, so under plain stage
+# ordering a registry-login or docker-build failure on the default branch removes
+# BOTH security jobs from the pipeline — silently, because a job that never ran
+# leaves nothing in the MR widget to notice. That is the same "looks like it
+# scanned" class this guard exists for, arriving from the other direction. A
+# pen-test job is safe if it declares `needs:` (stage ordering no longer gates
+# it) OR if nothing that can fail runs earlier. The generator holds the same
+# invariant over its own build:images job (lint:image-builder-always-on).
+stage_index() {                       # <stage-name> -> position in stages:, or -1
+  local want
+  want="$1"
+  local i
+  i=0
+  local s
+  while read -r s; do
+    [ -n "$s" ] || continue
+    if [ "$s" = "$want" ]; then printf '%s\n' "$i"; return; fi
+    i=$((i + 1))
+  done <<< "$DECLARED"
+  printf '%s\n' "-1"
+}
+
+# Top-level job keys: a column-0 name whose line is just `name:`. `stages:` and
+# the other value-carrying keys never match; the block-shaped reserved words are
+# filtered by name.
+job_names() {
+  code_only | sed -n 's/^\([A-Za-z][A-Za-z0-9_.:-]*\):[[:space:]]*$/\1/p'
+}
+
+PENTEST_IDX="$(stage_index pentest)"
+BLOCKERS=""
+while read -r job; do
+  [ -n "$job" ] || continue
+  case "$job" in
+    include|variables|default|workflow|cache|before_script|after_script|image|services) continue ;;
+  esac
+  JOB_BODY="$(block_of "$job")"
+  JOB_STAGE="$(printf '%s\n' "$JOB_BODY" | sed -n 's/^[[:space:]]*stage:[[:space:]]*//p' | head -1)"
+  [ -n "$JOB_STAGE" ] || JOB_STAGE="test"
+  JOB_IDX="$(stage_index "$JOB_STAGE")"
+  [ "$JOB_IDX" -ge 0 ] || continue                       # undeclared: check 7 owns it
+  [ "$JOB_IDX" -lt "$PENTEST_IDX" ] || continue          # not earlier: cannot gate
+  if printf '%s\n' "$JOB_BODY" | grep -E '^[[:space:]]+allow_failure:[[:space:]]*true[[:space:]]*$' >/dev/null; then
+    continue                                             # earlier, but cannot fail the stage
+  fi
+  BLOCKERS="${BLOCKERS} ${job}"
+done <<< "$(job_names)"
+
+for pjob in pentest:sca pentest:dast; do
+  PJOB_BODY="$(block_of "$pjob")"
+  [ -n "$PJOB_BODY" ] || continue                        # absence is check 3/4's finding
+  if printf '%s\n' "$PJOB_BODY" | grep -E '^[[:space:]]+needs:' >/dev/null; then
+    ok "$pjob declares needs: — an earlier stage failing cannot delete the scan"
+  elif [ -z "${BLOCKERS// /}" ]; then
+    ok "$pjob is ungated: no job that can fail runs in an earlier stage"
+  else
+    fail "$pjob declares no needs:, so it runs only if${BLOCKERS} succeed — a failed build would silently remove the security scan from the pipeline"
+  fi
+done
+
 # -----------------------------------------------------------------------------
 if [ "$FAILURES" -ne 0 ]; then
   printf '\n%d check(s) FAILED\n' "$FAILURES" >&2

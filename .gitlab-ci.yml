@@ -68,9 +68,20 @@ build:image:
 # SCA — OWASP Dependency-Check over this repo's own manifests (package.json /
 # package-lock.json), self-checkout, --failOnCVSS 7. Nothing to fetch: the thing
 # being scanned is the repo the job already has.
+# NEEDS: [] — the pen-test jobs are deliberately NOT gated behind the build.
+# Stage ordering is a gate: `pentest` runs only if every earlier stage SUCCEEDS,
+# and build:image is (correctly) not allow_failure. So under plain stage ordering
+# a registry-login or docker-build failure on the default branch would remove
+# BOTH security jobs from the pipeline — and silently, because a job that never
+# ran leaves nothing in the MR widget to notice, which is the same "looks like it
+# scanned" failure this whole file is wired against. Neither job consumes
+# anything the build produces (SCA reads this checkout; DAST stands up its own
+# env-test-build), so neither declares a dependency. The generator holds the same
+# invariant over its own build:images job — see lint:image-builder-always-on.
 pentest:sca:
   extends: .pentest-sca
   allow_failure: true
+  needs: []
   rules:
     - if: '$CI_COMMIT_BRANCH == $CI_DEFAULT_BRANCH'
     - if: '$CI_PIPELINE_SOURCE == "merge_request_event"'
@@ -102,6 +113,7 @@ pentest:sca:
 pentest:dast:
   extends: .pentest-dast-baseline
   allow_failure: true
+  needs: []
   variables:
     PENTEST_HARNESS_DIR: "${CI_PROJECT_DIR}/.pentest-harness/tests/pentest"
   before_script:

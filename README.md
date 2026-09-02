@@ -60,8 +60,10 @@ pipeline; findings land in the archived `out/pentest` scorecard and SARIF for tr
 scan is not a finding, though, which is the trap this repo is wired to avoid: the harness runs from
 the including repo's checkout, so `pentest:dast` **fetches** it from the generator at CI time
 (depth-1 clone of the same `main` the `include:` pins) rather than assuming a `tests/pentest/` this
-repo does not have. `lint:ci-wiring` asserts that reachability on every push, and mutation-tests
-itself so a green tick means the assertion can actually fail:
+repo does not have. Both pen-test jobs also declare `needs: []`: stage ordering would otherwise run them only after
+`build` succeeded, so a failed image build on the default branch would remove the security scan
+from the pipeline without saying so. `lint:ci-wiring` asserts all of that on every push, and
+mutation-tests itself so a green tick means the assertions can actually fail:
 
 ```sh
 npm run check:ci-wiring   # assert this repo's pen-test wiring is not inert
