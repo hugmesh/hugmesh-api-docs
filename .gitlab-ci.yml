@@ -3,10 +3,53 @@
 # GitLab (mirror_trigger_builds=true), so this runs on push / mirror-sync on the
 # privileged x86 runner (shell executor with docker, matching the generator CI).
 # Images carry NO keys — KEYS material is supplied from the USB at first boot.
-stages: [build]
 
+# Centralized OWASP pen-test stage (SCA + authenticated ZAP DAST baseline) pulled
+# from the generator. ONE source of truth: onboarded repos get the full harness
+# (Dependency-Check SCA + ZAP baseline + custom probes + nuclei) by extending the
+# hidden .pentest-* jobs below, rather than each keeping a copy that drifts.
+# See memory hugmesh-pentest-standard / hugmesh-dast-inert.
+include:
+  - project: 'hugmesh/hugmesh-generator'
+    ref: main
+    file: '/tests/pentest/ci/pentest-stage.gitlab-ci.yml'
+
+stages: [lint, build, pentest]
+
+# -----------------------------------------------------------------------------
+# lint:ci-wiring — the guard that keeps the stage below from going quietly inert.
+#
+# The pen-test stage is allow_failure by policy, so nothing in the pipeline view
+# distinguishes "DAST ran and found nothing" from "DAST could not run at all".
+# This job asserts the wiring in THIS file is structurally capable of scanning
+# (harness reachable at PENTEST_HARNESS_DIR, base before_script not silently
+# replaced, allow_failure still present) and then mutation-tests that guard
+# against deliberately-broken copies, so a green tick here means the checks can
+# actually fail. Pure bash — no image, no Docker, no network.
+# -----------------------------------------------------------------------------
+lint:ci-wiring:
+  stage: lint
+  needs: []
+  tags: [hugmesh-x86]
+  rules:
+    - if: '$CI_COMMIT_BRANCH == $CI_DEFAULT_BRANCH'
+    - if: '$CI_PIPELINE_SOURCE == "merge_request_event"'
+    - if: '$CI_COMMIT_TAG'
+  script:
+    - bash scripts/check-ci-wiring.test.sh
+
+# NEEDS: [] — same rule as the pen-test jobs below, applied to the release job.
+# This file adds a `lint` stage in FRONT of `build`, and stage ordering is a gate:
+# without an explicit needs:, a red lint:ci-wiring would stop the image build (and
+# therefore the ArgoCD input, which tracks the branch tag) as a side effect of
+# stage order rather than as a decision anyone took. Before this file grew a lint
+# stage, build:image ran unconditionally; `needs: []` keeps it that way. A red
+# guard still reds the pipeline and the MR — it just does not silently swallow the
+# release job. (Make it `needs: [lint:ci-wiring]` if the gate is ever wanted; what
+# must not happen is the gate existing implicitly.)
 build:image:
   stage: build
+  needs: []
   tags: [hugmesh-x86, privileged]
   rules:
     - if: '$CI_COMMIT_BRANCH == $CI_DEFAULT_BRANCH'
@@ -19,3 +62,112 @@ build:image:
     - docker build --pull -t "$CI_REGISTRY_IMAGE:$TAG" -t "$CI_REGISTRY_IMAGE:$CI_COMMIT_REF_SLUG" .
     - docker push "$CI_REGISTRY_IMAGE:$TAG"
     - docker push "$CI_REGISTRY_IMAGE:$CI_COMMIT_REF_SLUG"
+
+# -----------------------------------------------------------------------------
+# OWASP pen-test stage — thin jobs extending the centralized hidden .pentest-*
+# jobs from the generator (included above). Both jobs INHERIT the base's rules
+# rather than restating them, so array replacement cannot quietly drop one.
+#
+# allow_failure: true is DELIBERATE POLICY, not an oversight — a finding (or a
+# flaky env-test-build stand-up) must never red an onboarded repo's pipeline; the
+# findings land in the archived out/pentest scorecard + SARIF for triage. Do not
+# "fix" it. An ABSENT scan, on the other hand, is not a finding, which is why the
+# harness below is fetched rather than assumed, and why lint:ci-wiring exists.
+# -----------------------------------------------------------------------------
+
+# SCA — OWASP Dependency-Check over this repo's own manifests (package.json /
+# package-lock.json), self-checkout, --failOnCVSS 7. Nothing to fetch: the thing
+# being scanned is the repo the job already has.
+# NEEDS: [] — the pen-test jobs are deliberately NOT gated behind the build.
+# Stage ordering is a gate: `pentest` runs only if every earlier stage SUCCEEDS,
+# and build:image is (correctly) not allow_failure. So under plain stage ordering
+# a registry-login or docker-build failure on the default branch would remove
+# BOTH security jobs from the pipeline — and silently, because a job that never
+# ran leaves nothing in the MR widget to notice, which is the same "looks like it
+# scanned" failure this whole file is wired against. Neither job consumes
+# anything the build produces (SCA reads this checkout; DAST stands up its own
+# env-test-build), so neither declares a dependency. The generator holds the same
+# invariant over its own build:images job — see lint:image-builder-always-on.
+#
+# RULES: INHERITED, never restated. `extends:` REPLACES arrays — the same
+# mechanism the before_script splice below exists for. .pentest-sca declares
+# THREE rules (merge request, default branch, and `$CI_PIPELINE_SOURCE ==
+# "schedule"`); restating the first two here would look like a faithful copy and
+# silently delete SCA from every scheduled pipeline. lint:ci-wiring asserts that
+# neither pen-test job overrides rules:.
+pentest:sca:
+  extends: .pentest-sca
+  allow_failure: true
+  needs: []
+
+# DAST — authenticated ZAP baseline (passiveScan + spider + the custom probes +
+# the committed nuclei boundary templates) via the shared harness.
+#
+# HARNESS: FETCHED AT CI TIME, NOT VENDORED. run-pentest.sh executes from the
+# INCLUDING repo's checkout (PENTEST_HARNESS_DIR, default `tests/pentest`), which
+# this Angular remote does not have — inheriting the template alone would give a
+# `pentest:dast` entry that dies having scanned nothing. Of the two fixes, FETCH
+# beats vendor here: the harness is a 36-file / ~330 KB tree whose only consumer
+# is CI; the `include:` above already pins the template to the generator's `main`,
+# so cloning that same ref keeps template and harness in lockstep by construction;
+# and the one repo in the org that vendored a copy (hugmesh-games) drifted from
+# upstream and kept the silent-skip defects after they were fixed at the source.
+# Measured cost of the choice: ~23 MiB transferred, ~110 MiB checked out per DAST
+# run, over the in-cluster LAN. (A sparse checkout of tests/pentest/ would cut
+# that to a rounding error but adds a git-version floor on the runner; worth doing
+# once the runner's git is known.)
+#
+# WHAT THIS JOB SCANS, EXACTLY. The harness's compose profile stands up the
+# generator's env-test-build (`make stack-up`) and points ZAP at the two-brand
+# gateway front door. That front door DOES cover this repo's surface — the stack
+# builds a `hugmesh-api-docs` service (tests/stack/compose.local.yaml) and the
+# gateway routes `Path=/api-docs/**` to it (gateway-routes/fe/application-routes.yml)
+# — which is why DAST_TARGET, the harness's documented per-repo target override
+# (tests/pentest/env/compose.env), is deliberately LEFT UNSET here: this service is
+# not "not the compose gateway", it is behind it.
+#
+# WHAT IT DOES NOT SCAN: this pipeline's commit. `stack-up` depends on
+# `stack-clone`, which populates ${STACK_SRC} from GIT_BASE=https://github.com/hugmesh
+# at GIT_REF=main (generator Makefile), and compose builds api-docs from
+# ${STACK_SRC}/hugmesh-api-docs. So the image under scan is built from `main`, not
+# from $CI_COMMIT_SHA: on the default branch that is this commit once merged; on a
+# merge request it is not. Read pentest:dast as a posture scan of the deployed
+# platform, NOT as a per-diff gate — and do not read a green one as "this MR
+# introduced no finding". Narrowing it to a per-repo source needs a source-override
+# seam in the shared harness (the generator owns that), not an edit here.
+#
+# TWO RUNTIME PREREQUISITES THIS FILE CANNOT ASSERT, both of which fail as a shrug
+# because the stage is allow_failure — watch the first pipeline rather than
+# assuming:
+#   1. hugmesh/hugmesh-generator must allowlist this project for CI_JOB_TOKEN
+#      cross-project access, or the harness clone 403s. (`include: project:`
+#      resolves under the triggerer's permissions, NOT the job token, so the
+#      include can succeed while the clone fails.)
+#   2. `make stack-clone` clones ~20 PRIVATE repos from github.com/hugmesh, so the
+#      runner needs a GitHub credential; without one the stand-up exits 1 having
+#      scanned nothing.
+# Note also that the harness's TEARDOWN_CMD (`make stack-down`) drops the
+# fixed-name `hugmesh-local` compose project with `down -v`. On a shell-executor
+# runner sharing a Docker daemon with a live local stack, that is destructive.
+#
+# The clone is PREPENDED to the base's before_script via !reference, never in
+# place of it: `extends:` REPLACES arrays, so a bare `before_script:` override
+# (the shape used in hugmesh-admin-ui) silently drops the base's pinned-nuclei
+# install — leaving `run-pentest.sh --nuclei` to self-skip — along with its
+# missing-harness FATAL. Order matters: fetch first, so the base's harness
+# assertion runs against the fetched tree and still fails readably if the
+# generator ever moves it.
+pentest:dast:
+  extends: .pentest-dast-baseline
+  allow_failure: true
+  needs: []
+  variables:
+    PENTEST_HARNESS_DIR: "${CI_PROJECT_DIR}/.pentest-harness/tests/pentest"
+  before_script:
+    - rm -rf "${CI_PROJECT_DIR}/.pentest-harness"
+    # Same recipe the generator uses for its own sibling clones: the org base is
+    # derived from CI_REPOSITORY_URL, which already carries the read-only CI job
+    # token, so no credential is committed and none needs configuring.
+    - ORG_BASE="$(dirname "${CI_REPOSITORY_URL}")"
+    - git clone --depth 1 --branch main "${ORG_BASE}/hugmesh-generator.git" "${CI_PROJECT_DIR}/.pentest-harness"
+    - !reference [.pentest-dast-base, before_script]
