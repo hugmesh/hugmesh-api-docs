@@ -13,8 +13,13 @@
 # were in exactly that state (see memory hugmesh-dast-inert).
 #
 # So this guard does not just grep for job names. It asserts the harness is
-# REACHABLE at the path the job will actually run from, and that overriding
-# `before_script` has not silently dropped what the shared base does there.
+# REACHABLE at the path the job will actually run from — comparing the fetch
+# destination to PENTEST_HARNESS_DIR exactly, not as a substring — that overriding
+# `before_script` has not silently dropped what the shared base does there AND
+# splices it back after the fetch rather than before it, that template and harness
+# are pinned to the same ref, that `rules:` is inherited rather than restated
+# (`extends:` REPLACES arrays), and that no job in this file is gated behind an
+# earlier stage implicitly.
 #
 # Pure bash + grep/sed: no YAML library, no network, no Docker — it must be
 # runnable on the plain shell runner and in a pre-commit hook.
@@ -85,6 +90,19 @@ else
   fail "no include: of hugmesh/hugmesh-generator /tests/pentest/ci/pentest-stage.gitlab-ci.yml"
 fi
 
+# The ref and the template path the include: names are load-bearing for checks 5
+# and 6b below: the harness is fetched from the SAME repo at the SAME ref, and it
+# lives at the template path's grandparent (/tests/pentest/ci/<file> -> tests/pentest).
+INC_REF="$(printf '%s\n' "$INCLUDE_BLOCK" |
+  sed -n "s/^[[:space:]]*ref:[[:space:]]*['\"]\{0,1\}\([^'\"[:space:]]*\).*/\1/p" | head -1)"
+INC_FILE="$(printf '%s\n' "$INCLUDE_BLOCK" |
+  sed -n "s/^[[:space:]]*file:[[:space:]]*['\"]\{0,1\}\([^'\"[:space:]]*\).*/\1/p" | head -1)"
+TPL_HARNESS="tests/pentest"
+case "$INC_FILE" in
+  */*/*) TPL_CI_DIR="${INC_FILE%/*}"; TPL_HARNESS="${TPL_CI_DIR%/*}"; TPL_HARNESS="${TPL_HARNESS#/}" ;;
+esac
+[ -n "$TPL_HARNESS" ] || TPL_HARNESS="tests/pentest"
+
 # -- 2. the pentest stage is declared ------------------------------------------
 if code_only | grep -E '^stages:.*\bpentest\b' >/dev/null; then
   ok "'pentest' is in stages:"
@@ -127,46 +145,109 @@ check_pentest_job "pentest:dast" '\.pentest-dast-baseline'
 
 # -- 5. THE ANTI-INERTNESS CHECK: the harness is reachable ---------------------
 # The base job runs `bash "${PENTEST_HARNESS_DIR}/run-pentest.sh"`. That resolves
-# only if the repo vendors the harness at the default path, or the job fetches it
-# to the path it then points PENTEST_HARNESS_DIR at. Anything else is a job that
-# scans nothing.
+# only if the repo vendors the harness at that path, or the job fetches it to the
+# path it then points PENTEST_HARNESS_DIR at. Anything else is a job that scans
+# nothing.
+#
+# "Points inside it" is NOT a substring question, and an earlier version of this
+# check asked it as one (`grep -F "$HARNESS_TOP" | grep -F "git clone"`). Two
+# one-line, entirely ordinary edits defeated that form while leaving the job 100%
+# inert, with the guard printing "ok":
+#   * clone into `.pentest-harness-old` and leave PENTEST_HARNESS_DIR alone — the
+#     harness lands somewhere the job never looks;
+#   * point PENTEST_HARNESS_DIR at `.pentest-harness/tests/security` — a plausible
+#     edit if the generator ever moved the harness.
+# So the fetch destination is EXTRACTED and compared exactly, and the sub-path
+# inside the clone is compared against the harness root the include: itself names
+# (/tests/pentest/ci/pentest-stage.gitlab-ci.yml -> tests/pentest) — the only path
+# in this file that is known to exist in the cloned tree.
 DAST_BODY="$(block_of "pentest:dast")"
 HARNESS_DIR="$(printf '%s\n' "$DAST_BODY" |
   sed -n 's/^[[:space:]]*PENTEST_HARNESS_DIR:[[:space:]]*"\{0,1\}\([^"]*\)"\{0,1\}[[:space:]]*$/\1/p' | head -1)"
+HARNESS_REL="${HARNESS_DIR#\$\{CI_PROJECT_DIR\}/}"
 
-if [ -f "${REPO_ROOT}/tests/pentest/run-pentest.sh" ] && [ -z "$HARNESS_DIR" ]; then
-  ok "harness is VENDORED at tests/pentest/run-pentest.sh (template default)"
-elif [ -n "$HARNESS_DIR" ]; then
-  # The fetch must land at a path the harness dir sits under. Compare on the
-  # literal text after stripping the CI_PROJECT_DIR prefix both sides share.
-  HARNESS_REL="${HARNESS_DIR#\$\{CI_PROJECT_DIR\}/}"
-  HARNESS_TOP="${HARNESS_REL%%/*}"
-  if [ -z "$HARNESS_TOP" ]; then
-    fail "PENTEST_HARNESS_DIR ('$HARNESS_DIR') has no fetchable path component"
-  elif printf '%s\n' "$DAST_BODY" | grep -E "git clone.+hugmesh-generator" >/dev/null &&
-       printf '%s\n' "$DAST_BODY" | grep -F "$HARNESS_TOP" | grep -F "git clone" >/dev/null; then
-    ok "harness is FETCHED at CI time into ${HARNESS_TOP}/ and PENTEST_HARNESS_DIR points inside it"
+# The clone line, its position in the job body (check 6 needs the order), and the
+# destination it writes to (its last quoted argument).
+CLONE_LINE="$(printf '%s\n' "$DAST_BODY" | grep -n 'git clone' | head -1)"
+CLONE_LNO="${CLONE_LINE%%:*}"
+CLONE_DEST="$(printf '%s\n' "$CLONE_LINE" | sed -n 's/^.*git clone .*"\([^"]*\)"[[:space:]]*$/\1/p')"
+CLONE_REL="${CLONE_DEST#\$\{CI_PROJECT_DIR\}/}"
+CLONE_BRANCH="$(printf '%s\n' "$CLONE_LINE" |
+  sed -n 's/^.*git clone .*--branch[[:space:]]\{1,\}"\{0,1\}\([^[:space:]"]*\).*/\1/p')"
+
+if [ -z "$HARNESS_DIR" ]; then
+  if [ -f "${REPO_ROOT}/${TPL_HARNESS}/run-pentest.sh" ]; then
+    ok "harness is VENDORED at ${TPL_HARNESS}/run-pentest.sh (template default)"
   else
-    fail "pentest:dast sets PENTEST_HARNESS_DIR='$HARNESS_DIR' but never clones the harness into ${HARNESS_TOP}/ — the job would run no scan"
+    fail "pentest:dast neither vendors ${TPL_HARNESS}/run-pentest.sh nor fetches the harness — the job would die on a bare exit 127 having scanned nothing"
   fi
+elif [ -f "${REPO_ROOT}/${HARNESS_REL}/run-pentest.sh" ]; then
+  ok "harness is VENDORED at ${HARNESS_REL}/run-pentest.sh"
+elif [ -z "$CLONE_DEST" ]; then
+  fail "pentest:dast sets PENTEST_HARNESS_DIR='$HARNESS_DIR', vendors nothing there, and clones nothing — the job would run no scan"
+elif ! printf '%s\n' "$DAST_BODY" | grep -E "git clone.+hugmesh-generator" >/dev/null; then
+  fail "pentest:dast's clone is not of hugmesh-generator, so the harness would not be at '$HARNESS_REL' — the job would run no scan"
+elif [ "$HARNESS_REL" = "${CLONE_REL}/${TPL_HARNESS}" ]; then
+  ok "harness is FETCHED into ${CLONE_REL}/ and PENTEST_HARNESS_DIR is exactly ${CLONE_REL}/${TPL_HARNESS}"
 else
-  fail "pentest:dast neither vendors tests/pentest/run-pentest.sh nor fetches the harness — the job would die on a bare exit 127 having scanned nothing"
+  fail "pentest:dast clones into '${CLONE_REL}' but PENTEST_HARNESS_DIR is '${HARNESS_REL}' — expected exactly '${CLONE_REL}/${TPL_HARNESS}' (the harness root the include: names). The harness would not be where the job looks, and the job would run no scan."
 fi
 
-# -- 6. an overridden before_script must re-splice the base's ------------------
+# -- 6. an overridden before_script must re-splice the base's, AFTER the fetch --
 # `extends:` REPLACES arrays; it does not concatenate them. A job that overrides
 # before_script to add its harness fetch silently drops what .pentest-dast-base
 # does there: the "no harness" FATAL and the pinned-nuclei install that makes
 # `run-pentest.sh --nuclei` more than a self-skip. `!reference` splices it back.
+#
+# ORDER IS PART OF THE INVARIANT, not a style preference. The base's first act is
+# to FATAL if ${PENTEST_HARNESS_DIR}/run-pentest.sh is missing. Spliced above the
+# fetch — the conventional place to put a base splice, and a one-line edit anyone
+# tidying this file might make — that FATAL fires against a directory that has not
+# been cloned yet, exits 1, and (the stage being allow_failure) reads as a shrug.
 if printf '%s\n' "$DAST_BODY" | grep -E '^[[:space:]]+before_script:' >/dev/null; then
-  if printf '%s\n' "$DAST_BODY" | grep -F '!reference [.pentest-dast-base, before_script]' >/dev/null; then
-    ok "pentest:dast re-splices the base before_script (keeps the harness FATAL + pinned nuclei)"
-  else
+  REF_LINE="$(printf '%s\n' "$DAST_BODY" | grep -Fn '!reference [.pentest-dast-base, before_script]' | head -1)"
+  REF_LNO="${REF_LINE%%:*}"
+  if [ -z "$REF_LINE" ]; then
     fail "pentest:dast overrides before_script without '!reference [.pentest-dast-base, before_script]' — the pinned-nuclei install and the missing-harness FATAL are dropped"
+  elif [ -z "$CLONE_LNO" ]; then
+    ok "pentest:dast re-splices the base before_script (keeps the harness FATAL + pinned nuclei)"
+  elif [ "$REF_LNO" -gt "$CLONE_LNO" ]; then
+    ok "pentest:dast re-splices the base before_script AFTER the fetch (the harness FATAL runs against a tree that exists)"
+  else
+    fail "pentest:dast splices the base before_script BEFORE the harness fetch — the base's missing-harness FATAL fires against a directory that has not been cloned yet, exits 1, and the job scans nothing"
   fi
 else
   ok "pentest:dast does not override before_script (base before_script intact)"
 fi
+
+# -- 6b. the fetched harness and the included template are the SAME ref ---------
+# The file's own argument for fetching rather than vendoring is that `include:`
+# already pins the template to a ref, so cloning that same ref keeps template and
+# harness in lockstep "by construction". That only holds while the two refs are
+# actually equal, and nothing but this check makes them stay equal.
+if [ -n "$CLONE_DEST" ]; then
+  if [ -n "$INC_REF" ] && [ "$INC_REF" = "$CLONE_BRANCH" ]; then
+    ok "template and harness are the same ref (${INC_REF}) — no template/harness skew"
+  else
+    fail "include: pins ref '${INC_REF:-<none>}' but the harness clone takes branch '${CLONE_BRANCH:-<none>}' — the job would run one version's harness against another version's template"
+  fi
+fi
+
+# -- 6c. `rules:` must be INHERITED from the base, not restated ----------------
+# Same mechanism as check 6, applied to this file's own jobs: `extends:` REPLACES
+# arrays. .pentest-sca declares THREE rules (merge request, default branch, and
+# `$CI_PIPELINE_SOURCE == "schedule"`); a job that restates the first two looks
+# like a faithful copy and silently deletes SCA from every scheduled pipeline.
+# There is no partial merge to get right, so the invariant is: don't override.
+for pjob in pentest:sca pentest:dast; do
+  PJ_BODY="$(block_of "$pjob")"
+  [ -n "$PJ_BODY" ] || continue
+  if printf '%s\n' "$PJ_BODY" | grep -E '^[[:space:]]+rules:' >/dev/null; then
+    fail "$pjob overrides rules: — extends: REPLACES arrays, so the base's rules are dropped wholesale (.pentest-sca's third rule is the scheduled pipeline). Inherit them."
+  else
+    ok "$pjob inherits the base's rules: (nothing dropped by array replacement)"
+  fi
+done
 
 # -- 7. every job's stage is declared ------------------------------------------
 # A job whose `stage:` is not in `stages:` is a hard pipeline error, and it is an
@@ -185,16 +266,22 @@ while read -r used; do
 done <<< "$(code_only | sed -n 's/^[[:space:]]\{1,\}stage:[[:space:]]*//p' | sort -u)"
 [ "$UNDECLARED" -eq 0 ] && ok "every job's stage: is declared in stages:"
 
-# -- 8. the pen-test jobs are not gated behind a blocking earlier stage --------
-# Stage ordering is itself a gate: `pentest` runs only if every earlier stage
-# SUCCEEDS. build:image is (correctly) not allow_failure, so under plain stage
-# ordering a registry-login or docker-build failure on the default branch removes
-# BOTH security jobs from the pipeline — silently, because a job that never ran
-# leaves nothing in the MR widget to notice. That is the same "looks like it
-# scanned" class this guard exists for, arriving from the other direction. A
-# pen-test job is safe if it declares `needs:` (stage ordering no longer gates
-# it) OR if nothing that can fail runs earlier. The generator holds the same
-# invariant over its own build:images job (lint:image-builder-always-on).
+# -- 8. NO job is gated behind an earlier stage IMPLICITLY ---------------------
+# Stage ordering is itself a gate: a stage runs only if every earlier stage
+# SUCCEEDS, and a job that never ran leaves nothing in the MR widget to notice.
+# That is the same "looks like it scanned" class this guard exists for, arriving
+# from the other direction, and it bites the security jobs hardest: build:image is
+# (correctly) not allow_failure, so under plain stage ordering a registry-login or
+# docker-build failure on the default branch would remove BOTH pen-test jobs.
+#
+# The rule is applied to EVERY job, not just the pen-test pair. This file adds a
+# `lint` stage in front of `build`, so the same implicit gate now points at the
+# release job too — and a guard that only ever looked at two hardcoded job names
+# could not see the coupling it had just introduced. A job is safe if it states
+# its dependencies EXPLICITLY (`needs: []` for none, `needs: [job]` for a real one
+# — the shape the org's angular-mfe skeleton uses) or if nothing that can fail
+# runs earlier. The generator holds the same invariant over its own build:images
+# job (lint:image-builder-always-on).
 stage_index() {                       # <stage-name> -> position in stages:, or -1
   local want
   want="$1"
@@ -216,36 +303,55 @@ job_names() {
   code_only | sed -n 's/^\([A-Za-z][A-Za-z0-9_.:-]*\):[[:space:]]*$/\1/p'
 }
 
-PENTEST_IDX="$(stage_index pentest)"
-BLOCKERS=""
+# One pass to record every job's stage index and whether it can fail the stage.
+JOB_META=""
 while read -r job; do
   [ -n "$job" ] || continue
   case "$job" in
-    include|variables|default|workflow|cache|before_script|after_script|image|services) continue ;;
+    include|variables|default|workflow|cache|stages|before_script|after_script|image|services) continue ;;
   esac
   JOB_BODY="$(block_of "$job")"
   JOB_STAGE="$(printf '%s\n' "$JOB_BODY" | sed -n 's/^[[:space:]]*stage:[[:space:]]*//p' | head -1)"
-  [ -n "$JOB_STAGE" ] || JOB_STAGE="test"
+  if [ -z "$JOB_STAGE" ]; then
+    # No `stage:` here means it is inherited from what the job extends, which is
+    # not in this file. Every .pentest-* hidden job in the included template is
+    # `stage: pentest`; anything else falls back to GitLab's own default. Getting
+    # this wrong would silently drop the pen-test jobs OUT of this check, which is
+    # exactly the class of hole the check exists to close.
+    if printf '%s\n' "$JOB_BODY" | grep -E '^[[:space:]]+extends:[[:space:]]*\.pentest-' >/dev/null; then
+      JOB_STAGE="pentest"
+    else
+      JOB_STAGE="test"
+    fi
+  fi
   JOB_IDX="$(stage_index "$JOB_STAGE")"
   [ "$JOB_IDX" -ge 0 ] || continue                       # undeclared: check 7 owns it
-  [ "$JOB_IDX" -lt "$PENTEST_IDX" ] || continue          # not earlier: cannot gate
+  JOB_AF=0
   if printf '%s\n' "$JOB_BODY" | grep -E '^[[:space:]]+allow_failure:[[:space:]]*true[[:space:]]*$' >/dev/null; then
-    continue                                             # earlier, but cannot fail the stage
+    JOB_AF=1                                             # cannot fail the stage
   fi
-  BLOCKERS="${BLOCKERS} ${job}"
+  JOB_META="${JOB_META}${JOB_IDX} ${JOB_AF} ${job}
+"
 done <<< "$(job_names)"
 
-for pjob in pentest:sca pentest:dast; do
-  PJOB_BODY="$(block_of "$pjob")"
-  [ -n "$PJOB_BODY" ] || continue                        # absence is check 3/4's finding
-  if printf '%s\n' "$PJOB_BODY" | grep -E '^[[:space:]]+needs:' >/dev/null; then
-    ok "$pjob declares needs: — an earlier stage failing cannot delete the scan"
+while read -r idx af job; do
+  [ -n "${job:-}" ] || continue
+  BLOCKERS=""
+  while read -r oidx oaf ojob; do
+    [ -n "${ojob:-}" ] || continue
+    [ "$oidx" -lt "$idx" ] || continue                    # not earlier: cannot gate
+    [ "$oaf" -eq 0 ] || continue                          # earlier, but cannot fail
+    BLOCKERS="${BLOCKERS} ${ojob}"
+  done <<< "$JOB_META"
+  JOB_BODY="$(block_of "$job")"
+  if printf '%s\n' "$JOB_BODY" | grep -E '^[[:space:]]+needs:' >/dev/null; then
+    ok "$job states its dependencies (needs:) — an earlier stage failing cannot silently delete it"
   elif [ -z "${BLOCKERS// /}" ]; then
-    ok "$pjob is ungated: no job that can fail runs in an earlier stage"
+    ok "$job is ungated: no job that can fail runs in an earlier stage"
   else
-    fail "$pjob declares no needs:, so it runs only if${BLOCKERS} succeed — a failed build would silently remove the security scan from the pipeline"
+    fail "$job declares no needs:, so it runs only if${BLOCKERS} succeed — an earlier failure would silently remove it from the pipeline. State the dependency (needs: [] for none)."
   fi
-done
+done <<< "$JOB_META"
 
 # -----------------------------------------------------------------------------
 if [ "$FAILURES" -ne 0 ]; then

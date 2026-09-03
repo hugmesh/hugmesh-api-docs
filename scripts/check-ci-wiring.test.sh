@@ -143,6 +143,51 @@ mutate "remove needs: [] from the pen-test jobs (a failed build then deletes the
   { print }
 '
 
+# --- the mutations that an earlier version of the guard did NOT catch ---------
+# Each of these three leaves pentest:dast 100% inert at runtime, and each of them
+# passed the substring-shaped checks the guard shipped with. They are the nearest
+# neighbours of the real bug, which is exactly where a guard has to fire.
+mutate "clone lands beside PENTEST_HARNESS_DIR, not at it" '
+  { if ($0 ~ /git clone --depth 1/) sub(/\/\.pentest-harness"$/, "/.pentest-harness-old\""); print }
+'
+
+mutate "splice the base before_script BEFORE the fetch (FATAL fires on an absent tree)" '
+  /^    - !reference \[\.pentest-dast-base, before_script\]$/ { next }
+  /^  before_script:$/ { print; print "    - !reference [.pentest-dast-base, before_script]"; next }
+  { print }
+'
+
+mutate "point PENTEST_HARNESS_DIR at a wrong subpath inside the fetched clone" '
+  { sub(/\.pentest-harness\/tests\/pentest"$/, ".pentest-harness/tests/security\""); print }
+'
+
+mutate "skew the harness clone off the ref the include: pins" '
+  { if ($0 ~ /git clone --depth 1/) sub(/--branch main/, "--branch v1"); print }
+'
+
+# `extends:` REPLACES arrays. Restating two of the base's three rules looks like a
+# faithful copy and deletes SCA from every scheduled pipeline.
+mutate "restate the base rules on pentest:sca (drops the scheduled pipeline)" '
+  /^pentest:sca:/ {
+    print
+    print "  rules:"
+    print "    - if: $CI_PIPELINE_SOURCE == \"merge_request_event\""
+    print "    - if: $CI_COMMIT_BRANCH == $CI_DEFAULT_BRANCH"
+    next
+  }
+  { print }
+'
+
+# The release job is subject to the same rule as the security jobs: this file put
+# a lint stage in front of build, so without an explicit needs: a red guard would
+# silently swallow the image build (and the ArgoCD input that tracks its tag).
+mutate "remove needs: [] from build:image (a red lint stage then deletes the release job)" '
+  /^build:image:/ { inblk = 1 }
+  inblk && /^[^ \t#]/ && !/^build:image:/ { inblk = 0 }
+  inblk && /^  needs: \[\]$/ { next }
+  { print }
+'
+
 # --- leg 4: positive control for the VENDORED branch -------------------------
 # The guard must accept the other legitimate shape (harness vendored at the
 # template's default path, no PENTEST_HARNESS_DIR override), or it is not a
@@ -183,7 +228,9 @@ UNGATED="${WORK}/ungated"
 mkdir -p "$UNGATED"
 awk '
   { sub(/^stages: \[lint, build, pentest\]$/, "stages: [pentest, lint, build]") }
-  /^  needs: \[\]$/ { next }
+  /^pentest:(sca|dast):/ { inblk = 1 }
+  inblk && /^[^ \t#]/ && !/^pentest:(sca|dast):/ { inblk = 0 }
+  inblk && /^  needs: \[\]$/ { next }
   { print }
 ' "$REAL_CI" > "${UNGATED}/.gitlab-ci.yml"
 if cmp -s "$REAL_CI" "${UNGATED}/.gitlab-ci.yml"; then

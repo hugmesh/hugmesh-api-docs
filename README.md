@@ -62,13 +62,40 @@ the including repo's checkout, so `pentest:dast` **fetches** it from the generat
 (depth-1 clone of the same `main` the `include:` pins) rather than assuming a `tests/pentest/` this
 repo does not have. Both pen-test jobs also declare `needs: []`: stage ordering would otherwise run them only after
 `build` succeeded, so a failed image build on the default branch would remove the security scan
-from the pipeline without saying so. `lint:ci-wiring` asserts all of that on every push, and
-mutation-tests itself so a green tick means the assertions can actually fail:
+from the pipeline without saying so — and `build:image` declares it too, so the `lint` stage this
+file adds in front of it cannot swallow the release job the same way. Both pen-test jobs **inherit**
+the base's `rules:` rather than restating them, because `extends:` *replaces* arrays: a restated copy
+that dropped `.pentest-sca`'s third rule would silently delete SCA from every scheduled pipeline.
+`lint:ci-wiring` asserts all of that on every push, and mutation-tests itself so a green tick means
+the assertions can actually fail:
 
 ```sh
 npm run check:ci-wiring   # assert this repo's pen-test wiring is not inert
 npm run test:ci-wiring    # ...and prove the guard detects each way of breaking it
 ```
+
+### What `pentest:dast` actually covers
+
+Worth reading before treating a green `pentest:dast` as a statement about your merge request.
+The shared harness stands up the generator's env-test-build (`make stack-up`) and points ZAP at the
+two-brand gateway front door. That front door **does** reach this service — the stack builds a
+`hugmesh-api-docs` container and the gateway routes `Path=/api-docs/**` to it — which is why
+`DAST_TARGET` (the harness's per-repo target override) is deliberately left unset here.
+
+What it does **not** cover is this pipeline's commit. `stack-up` populates its sources by cloning
+`github.com/hugmesh/*` at `main`, and builds the api-docs image from that clone — so the scan
+reports on `main`, not on `$CI_COMMIT_SHA`. On the default branch that is this commit once merged;
+on a merge request it is not. Read the job as a **posture scan of the deployed platform**, never as
+a per-diff gate. Narrowing it to a per-repo source needs a source-override seam in the shared
+harness, which the generator owns.
+
+Two runtime prerequisites live outside this repo and both fail as a shrug (the stage is
+`allow_failure`), so the first pipeline has to be watched rather than assumed: `hugmesh-generator`
+must allowlist this project for `CI_JOB_TOKEN` cross-project access or the harness clone 403s, and
+the runner needs a GitHub credential or `stack-clone` cannot fetch the private sibling repos. The
+harness also tears its stack down with `docker compose down -v` on the fixed project name
+`hugmesh-local`, so the pen-test runner must not share a Docker daemon with a local stack anyone
+cares about.
 
 ## Roadmap
 

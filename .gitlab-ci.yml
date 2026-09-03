@@ -38,8 +38,18 @@ lint:ci-wiring:
   script:
     - bash scripts/check-ci-wiring.test.sh
 
+# NEEDS: [] — same rule as the pen-test jobs below, applied to the release job.
+# This file adds a `lint` stage in FRONT of `build`, and stage ordering is a gate:
+# without an explicit needs:, a red lint:ci-wiring would stop the image build (and
+# therefore the ArgoCD input, which tracks the branch tag) as a side effect of
+# stage order rather than as a decision anyone took. Before this file grew a lint
+# stage, build:image ran unconditionally; `needs: []` keeps it that way. A red
+# guard still reds the pipeline and the MR — it just does not silently swallow the
+# release job. (Make it `needs: [lint:ci-wiring]` if the gate is ever wanted; what
+# must not happen is the gate existing implicitly.)
 build:image:
   stage: build
+  needs: []
   tags: [hugmesh-x86, privileged]
   rules:
     - if: '$CI_COMMIT_BRANCH == $CI_DEFAULT_BRANCH'
@@ -55,8 +65,8 @@ build:image:
 
 # -----------------------------------------------------------------------------
 # OWASP pen-test stage — thin jobs extending the centralized hidden .pentest-*
-# jobs from the generator (included above). Rules mirror the org's other onboarded
-# repos: merge requests + the default branch.
+# jobs from the generator (included above). Both jobs INHERIT the base's rules
+# rather than restating them, so array replacement cannot quietly drop one.
 #
 # allow_failure: true is DELIBERATE POLICY, not an oversight — a finding (or a
 # flaky env-test-build stand-up) must never red an onboarded repo's pipeline; the
@@ -78,13 +88,17 @@ build:image:
 # anything the build produces (SCA reads this checkout; DAST stands up its own
 # env-test-build), so neither declares a dependency. The generator holds the same
 # invariant over its own build:images job — see lint:image-builder-always-on.
+#
+# RULES: INHERITED, never restated. `extends:` REPLACES arrays — the same
+# mechanism the before_script splice below exists for. .pentest-sca declares
+# THREE rules (merge request, default branch, and `$CI_PIPELINE_SOURCE ==
+# "schedule"`); restating the first two here would look like a faithful copy and
+# silently delete SCA from every scheduled pipeline. lint:ci-wiring asserts that
+# neither pen-test job overrides rules:.
 pentest:sca:
   extends: .pentest-sca
   allow_failure: true
   needs: []
-  rules:
-    - if: '$CI_COMMIT_BRANCH == $CI_DEFAULT_BRANCH'
-    - if: '$CI_PIPELINE_SOURCE == "merge_request_event"'
 
 # DAST — authenticated ZAP baseline (passiveScan + spider + the custom probes +
 # the committed nuclei boundary templates) via the shared harness.
@@ -102,6 +116,39 @@ pentest:sca:
 # run, over the in-cluster LAN. (A sparse checkout of tests/pentest/ would cut
 # that to a rounding error but adds a git-version floor on the runner; worth doing
 # once the runner's git is known.)
+#
+# WHAT THIS JOB SCANS, EXACTLY. The harness's compose profile stands up the
+# generator's env-test-build (`make stack-up`) and points ZAP at the two-brand
+# gateway front door. That front door DOES cover this repo's surface — the stack
+# builds a `hugmesh-api-docs` service (tests/stack/compose.local.yaml) and the
+# gateway routes `Path=/api-docs/**` to it (gateway-routes/fe/application-routes.yml)
+# — which is why DAST_TARGET, the harness's documented per-repo target override
+# (tests/pentest/env/compose.env), is deliberately LEFT UNSET here: this service is
+# not "not the compose gateway", it is behind it.
+#
+# WHAT IT DOES NOT SCAN: this pipeline's commit. `stack-up` depends on
+# `stack-clone`, which populates ${STACK_SRC} from GIT_BASE=https://github.com/hugmesh
+# at GIT_REF=main (generator Makefile), and compose builds api-docs from
+# ${STACK_SRC}/hugmesh-api-docs. So the image under scan is built from `main`, not
+# from $CI_COMMIT_SHA: on the default branch that is this commit once merged; on a
+# merge request it is not. Read pentest:dast as a posture scan of the deployed
+# platform, NOT as a per-diff gate — and do not read a green one as "this MR
+# introduced no finding". Narrowing it to a per-repo source needs a source-override
+# seam in the shared harness (the generator owns that), not an edit here.
+#
+# TWO RUNTIME PREREQUISITES THIS FILE CANNOT ASSERT, both of which fail as a shrug
+# because the stage is allow_failure — watch the first pipeline rather than
+# assuming:
+#   1. hugmesh/hugmesh-generator must allowlist this project for CI_JOB_TOKEN
+#      cross-project access, or the harness clone 403s. (`include: project:`
+#      resolves under the triggerer's permissions, NOT the job token, so the
+#      include can succeed while the clone fails.)
+#   2. `make stack-clone` clones ~20 PRIVATE repos from github.com/hugmesh, so the
+#      runner needs a GitHub credential; without one the stand-up exits 1 having
+#      scanned nothing.
+# Note also that the harness's TEARDOWN_CMD (`make stack-down`) drops the
+# fixed-name `hugmesh-local` compose project with `down -v`. On a shell-executor
+# runner sharing a Docker daemon with a live local stack, that is destructive.
 #
 # The clone is PREPENDED to the base's before_script via !reference, never in
 # place of it: `extends:` REPLACES arrays, so a bare `before_script:` override
@@ -124,6 +171,3 @@ pentest:dast:
     - ORG_BASE="$(dirname "${CI_REPOSITORY_URL}")"
     - git clone --depth 1 --branch main "${ORG_BASE}/hugmesh-generator.git" "${CI_PROJECT_DIR}/.pentest-harness"
     - !reference [.pentest-dast-base, before_script]
-  rules:
-    - if: '$CI_COMMIT_BRANCH == $CI_DEFAULT_BRANCH'
-    - if: '$CI_PIPELINE_SOURCE == "merge_request_event"'
