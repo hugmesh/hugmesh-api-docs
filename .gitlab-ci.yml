@@ -23,9 +23,13 @@ stages: [lint, build, pentest]
 # distinguishes "DAST ran and found nothing" from "DAST could not run at all".
 # This job asserts the wiring in THIS file is structurally capable of scanning
 # (harness reachable at PENTEST_HARNESS_DIR, base before_script not silently
-# replaced, allow_failure still present) and then mutation-tests that guard
-# against deliberately-broken copies, so a green tick here means the checks can
-# actually fail. Pure bash — no image, no Docker, no network.
+# replaced, allow_failure still present, both scans automatic rather than
+# `when: manual`, harness fetched from an origin this pipeline derives rather than
+# a literal host) — and, because none of that survives the guard itself being
+# quietly retired, that THIS job still runs the battery, blocking and unattended.
+# It then mutation-tests the guard against deliberately-broken copies, so a green
+# tick here means the checks can actually fail. Pure bash — no image, no Docker,
+# no network.
 # -----------------------------------------------------------------------------
 lint:ci-wiring:
   stage: lint
