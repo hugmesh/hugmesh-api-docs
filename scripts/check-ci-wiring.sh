@@ -21,6 +21,17 @@
 # (`extends:` REPLACES arrays), and that no job in this file is gated behind an
 # earlier stage implicitly.
 #
+# It then asserts the same thing about ITSELF (checks 9-11), because everything
+# above is only worth the paper it is printed on if something still RUNS it and
+# the scans it guards still RUN unattended. Five edits that touch no pen-test job
+# at all — allow_failure or `when: manual` on the job that runs this battery,
+# pointing that job at the guard instead of the battery, deleting the job, naming
+# a battery that is not in the repo — each retired the whole apparatus while every
+# check above kept printing "ok". So did `when: manual` on a pen-test job itself
+# (allow_failure makes a FINDING non-blocking; `when: manual` makes the SCAN
+# optional and still shows the job), and so did swapping the harness fetch's
+# CI-derived origin for a literal host.
+#
 # Pure bash + grep/sed: no YAML library, no network, no Docker — it must be
 # runnable on the plain shell runner and in a pre-commit hook.
 #
@@ -352,6 +363,119 @@ while read -r idx af job; do
     fail "$job declares no needs:, so it runs only if${BLOCKERS} succeed — an earlier failure would silently remove it from the pipeline. State the dependency (needs: [] for none)."
   fi
 done <<< "$JOB_META"
+
+# -- 9. the wiring guard itself must be BLOCKING and AUTOMATIC -----------------
+# Checks 1-8 all live in a file that only matters if something RUNS it. Six
+# one-line edits, none of which touches a single pen-test job, retire the whole
+# apparatus while leaving every check above printing "ok":
+#   * `allow_failure: true` on the guard job — it goes advisory, and a red guard
+#     becomes an orange shrug in exactly the pipeline view this repo has already
+#     learned not to trust;
+#   * `when: manual` — it never runs unattended, so nothing on a merge request or
+#     the default branch is ever checked;
+#   * pointing the job at check-ci-wiring.sh instead of check-ci-wiring.test.sh —
+#     the guard still runs, but the battery that proves the guard can FAIL does
+#     not, which is the same "a check that cannot fail passes for free" hole the
+#     battery exists to close;
+#   * deleting the job outright.
+# So the guard asserts its own invocation. This is not circular: the deletion case
+# is caught wherever the guard is run OTHER than from the job it is checking —
+# locally, in review, from `npm run check:ci-wiring`, or from a pre-commit hook —
+# and the three neutering edits are caught in CI too, because in every one of them
+# the job still runs.
+GUARD_JOB=""
+GUARD_SCRIPT=""
+while read -r job; do
+  [ -n "$job" ] || continue
+  case "$job" in
+    include|variables|default|workflow|cache|stages|before_script|after_script|image|services) continue ;;
+  esac
+  CAND="$(block_of "$job" |
+    sed -n 's/^.*[[:space:]]\([^[:space:]"]*check-ci-wiring\.test\.sh\).*$/\1/p' | head -1)"
+  if [ -n "$CAND" ]; then
+    GUARD_JOB="$job"
+    GUARD_SCRIPT="$CAND"
+    break
+  fi
+done <<< "$(job_names)"
+
+if [ -z "$GUARD_JOB" ]; then
+  fail "no job in this file runs check-ci-wiring.test.sh — every check in this guard is then unreachable from CI, and the wiring can go inert with nothing to notice. (A job that runs check-ci-wiring.sh alone is NOT enough: the battery is what proves these checks can fail.)"
+else
+  ok "$GUARD_JOB runs the mutation battery ($GUARD_SCRIPT)"
+  GUARD_BODY="$(block_of "$GUARD_JOB")"
+  if printf '%s\n' "$GUARD_BODY" | grep -E '^[[:space:]]+allow_failure:[[:space:]]*true[[:space:]]*$' >/dev/null; then
+    fail "$GUARD_JOB is allow_failure: true — the guard becomes advisory, so a broken wiring check reds nothing. allow_failure is deliberate policy on the PEN-TEST stage (a finding must not block); it is the opposite of policy here (a guard that cannot fail is not a guard)."
+  else
+    ok "$GUARD_JOB is blocking (no allow_failure) — a broken wiring check reds the pipeline"
+  fi
+  if printf '%s\n' "$GUARD_BODY" | grep -E '^[[:space:]]+when:[[:space:]]*(manual|never|delayed)([[:space:]]|$)' >/dev/null; then
+    fail "$GUARD_JOB carries when: manual/never/delayed — it would not run on a merge request or the default branch, so nothing checks the wiring unless a human remembers to click it"
+  else
+    ok "$GUARD_JOB runs automatically (no when: manual/never/delayed)"
+  fi
+  if [ -f "${REPO_ROOT}/${GUARD_SCRIPT}" ]; then
+    ok "the battery exists at ${GUARD_SCRIPT}"
+  else
+    fail "$GUARD_JOB runs '${GUARD_SCRIPT}', which does not exist in this repo — the job would die on a bare 'No such file'"
+  fi
+fi
+
+# -- 10. the pen-test jobs must run AUTOMATICALLY ------------------------------
+# `allow_failure: true` (policy, check 3/4) makes a FINDING non-blocking. It does
+# not make the scan optional. `when: manual` does — and it is the tidiest possible
+# way to stop scanning while leaving a `pentest:dast` entry in the pipeline view,
+# which is the exact shape of the org-wide inertness this file exists against.
+# `when: never` and `when: delayed` are the same edit wearing different hats.
+for pjob in pentest:sca pentest:dast; do
+  PJ_BODY="$(block_of "$pjob")"
+  [ -n "$PJ_BODY" ] || continue
+  if printf '%s\n' "$PJ_BODY" | grep -E '^[[:space:]]+when:[[:space:]]*(manual|never|delayed)([[:space:]]|$)' >/dev/null; then
+    fail "$pjob carries when: manual/never/delayed — a scan that runs only when somebody clicks is not a scan on a merge request or the default branch, and the pipeline still shows the job"
+  else
+    ok "$pjob runs automatically (no when: manual/never/delayed)"
+  fi
+done
+
+# -- 11. the harness is fetched from THIS pipeline's own org, not a literal host -
+# Check 5 proves the harness lands where the job looks; it does not ask where the
+# harness came FROM. The fetch is the one place this pipeline pulls executable
+# code from off-repo and runs it on a privileged runner, so the source has to be
+# derived from the pipeline's own CI_ variables (CI_REPOSITORY_URL here, the
+# CI_SERVER_* triple in the org's other fetch-shaped repo) rather than written out
+# as a literal host that review has to eyeball. A hardcoded scheme://host in this
+# line passes every other check in this file.
+if [ -n "$CLONE_LINE" ]; then
+  CLONE_SRC="$(printf '%s\n' "$CLONE_LINE" |
+    sed -n 's/^.*git clone [^"]*"\([^"]*\)"[[:space:]]*"[^"]*"[[:space:]]*$/\1/p')"
+  CLONE_VAR="$(printf '%s\n' "$CLONE_SRC" | sed -n 's/^\${\([A-Za-z_][A-Za-z0-9_]*\)}.*/\1/p')"
+  # ...and it must name the generator itself, not a neighbour of it. Check 5's
+  # `hugmesh-generator` grep is a substring test, so `hugmesh-generator-fork.git`
+  # satisfies it while the privileged runner executes somebody else's harness.
+  case "$CLONE_SRC" in
+    */hugmesh-generator.git|*/hugmesh-generator)
+      ok "the harness clone names hugmesh-generator exactly" ;;
+    *)
+      fail "the harness clone source '${CLONE_SRC}' is not hugmesh-generator[.git] — a neighbouring name (hugmesh-generator-fork.git) satisfies the substring test in check 5 while the privileged runner executes a different repo's harness" ;;
+  esac
+  if [ -z "$CLONE_SRC" ]; then
+    fail "could not read the harness clone's SOURCE url from: ${CLONE_LINE#*:}"
+  elif [ -z "$CLONE_VAR" ]; then
+    fail "the harness clone source '${CLONE_SRC}' does not start with a CI-derived variable. This job clones code and runs it on the privileged runner; the source must come from the pipeline's own CI_ variables (e.g. \${ORG_BASE} derived from CI_REPOSITORY_URL, or \${CI_SERVER_PROTOCOL}://...\${CI_SERVER_HOST}), never a literal host."
+  else
+    case "$CLONE_VAR" in
+      CI_*)
+        ok "the harness clone source is built from ${CLONE_VAR} (a CI-provided variable)" ;;
+      *)
+        if printf '%s\n' "$DAST_BODY" |
+             grep -E "(^|[[:space:]-])${CLONE_VAR}=.*CI_[A-Z_]+" >/dev/null; then
+          ok "the harness clone source is built from ${CLONE_VAR}, itself derived from a CI_ variable in this job"
+        else
+          fail "the harness clone source starts with \${${CLONE_VAR}}, which this job never derives from a CI_ variable — the fetched code's origin is not pinned to this pipeline's own server"
+        fi ;;
+    esac
+  fi
+fi
 
 # -----------------------------------------------------------------------------
 if [ "$FAILURES" -ne 0 ]; then

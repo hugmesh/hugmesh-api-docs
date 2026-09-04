@@ -57,6 +57,20 @@ else
   report fail "absent CI file did not exit 2"
 fi
 
+# seed_scripts <dir>: make a scratch copy look like a real checkout.
+# Check 9 asserts the CI file names a battery script that EXISTS on disk, so a
+# scratch dir holding nothing but a .gitlab-ci.yml would fail every mutation for
+# a reason that has nothing to do with the mutation — a battery that reports
+# "detected" for the wrong reason is not evidence. Every scratch tree therefore
+# carries the two scripts.
+seed_scripts() {
+  local dir
+  dir="$1"
+  mkdir -p "${dir}/scripts"
+  cp "$GUARD" "${dir}/scripts/check-ci-wiring.sh"
+  cp "${SELF_DIR}/check-ci-wiring.test.sh" "${dir}/scripts/check-ci-wiring.test.sh"
+}
+
 # --- leg 3: the mutation battery ---------------------------------------------
 # mutate <name> <awk program>: apply the program to a COPY of the real CI file,
 # assert the copy actually differs, then assert the guard rejects it.
@@ -68,6 +82,7 @@ mutate() {
   local dir
   dir="${WORK}/m$((PASS + FAIL))"
   mkdir -p "$dir"
+  seed_scripts "$dir"
   awk "$prog" "$REAL_CI" > "${dir}/.gitlab-ci.yml"
   if cmp -s "$REAL_CI" "${dir}/.gitlab-ci.yml"; then
     report fail "mutation '${name}' did NOT change the file — the mutation itself is broken"
@@ -188,12 +203,68 @@ mutate "remove needs: [] from build:image (a red lint stage then deletes the rel
   { print }
 '
 
+# --- the mutations that retire the GUARD rather than the wiring ---------------
+# Checks 1-8 only matter if something runs them. None of these five edits touches
+# a pen-test job, and before checks 9-11 existed every one of them left the guard
+# printing "ok" on its way to scanning nothing.
+mutate "allow_failure on the wiring guard job (the guard goes advisory)" '
+  /^lint:ci-wiring:/ { print; print "  allow_failure: true"; next }
+  { print }
+'
+
+mutate "when: manual on the wiring guard job (nothing checks an MR)" '
+  /^lint:ci-wiring:/ { print; print "  when: manual"; next }
+  { print }
+'
+
+mutate "the lint job runs the guard but not the battery that proves it can fail" '
+  { sub(/check-ci-wiring\.test\.sh/, "check-ci-wiring.sh"); print }
+'
+
+mutate "the wiring guard job deleted outright" '
+  /^lint:ci-wiring:/ { skip = 1; next }
+  skip && /^[^ \t#]/ { skip = 0 }
+  !skip { print }
+'
+
+mutate "the lint job runs a battery that is not in the repo" '
+  { sub(/scripts\/check-ci-wiring\.test\.sh/, "ci/check-ci-wiring.test.sh"); print }
+'
+
+# `allow_failure: true` makes a FINDING non-blocking (policy). `when: manual`
+# makes the SCAN optional, which is a different thing wearing the same clothes:
+# the pipeline still shows a `pentest:dast` entry.
+mutate "when: manual on pentest:dast (a scan nobody clicks is not a scan)" '
+  /^pentest:dast:/ { print; print "  when: manual"; next }
+  { print }
+'
+
+mutate "when: manual on pentest:sca" '
+  /^pentest:sca:/ { print; print "  when: manual"; next }
+  { print }
+'
+
+# The fetch is the one place this pipeline pulls executable code from off-repo and
+# runs it on a privileged runner.
+mutate "harness cloned from a literal foreign host instead of this pipeline org" '
+  { if ($0 ~ /git clone --depth 1/) sub(/\$\{ORG_BASE\}/, "https://example.invalid/attacker"); print }
+'
+
+mutate "harness cloned from a same-org NEIGHBOUR of the generator" '
+  { if ($0 ~ /git clone --depth 1/) sub(/hugmesh-generator\.git/, "hugmesh-generator-fork.git"); print }
+'
+
+mutate "harness cloned from an undefined variable (origin not pinned to this server)" '
+  { if ($0 ~ /git clone --depth 1/) sub(/\$\{ORG_BASE\}/, "${MIRROR_BASE}"); print }
+'
+
 # --- leg 4: positive control for the VENDORED branch -------------------------
 # The guard must accept the other legitimate shape (harness vendored at the
 # template's default path, no PENTEST_HARNESS_DIR override), or it is not a
 # check on reachability, just a check on one spelling.
 VEND="${WORK}/vendored"
 mkdir -p "${VEND}/tests/pentest"
+seed_scripts "$VEND"
 printf '#!/usr/bin/env bash\n' > "${VEND}/tests/pentest/run-pentest.sh"
 awk '
   /^  variables:$/ { drop = 1; next }
@@ -213,6 +284,7 @@ fi
 # ...and it must NOT accept that shape when the vendored harness is absent.
 NOVEND="${WORK}/vendored-missing"
 mkdir -p "$NOVEND"
+seed_scripts "$NOVEND"
 cp "${VEND}/.gitlab-ci.yml" "${NOVEND}/.gitlab-ci.yml"
 if bash "$GUARD" "${NOVEND}/.gitlab-ci.yml" "$NOVEND" >/dev/null 2>&1; then
   report fail "no PENTEST_HARNESS_DIR and no vendored harness was accepted — the inert case"
@@ -226,6 +298,7 @@ fi
 # and would wrongly red a repo whose pen-test stage genuinely runs first.
 UNGATED="${WORK}/ungated"
 mkdir -p "$UNGATED"
+seed_scripts "$UNGATED"
 awk '
   { sub(/^stages: \[lint, build, pentest\]$/, "stages: [pentest, lint, build]") }
   /^pentest:(sca|dast):/ { inblk = 1 }
@@ -240,6 +313,33 @@ elif bash "$GUARD" "${UNGATED}/.gitlab-ci.yml" "$UNGATED" >"${UNGATED}/out.log" 
 else
   report fail "a pen-test stage that nothing precedes was rejected — check 8 is over-fitted to needs:"
   cat "${UNGATED}/out.log" >&2
+fi
+
+# --- leg 7: positive control for check 11 -------------------------------------
+# The org's other fetch-shaped repo (hugmesh-admin-ui) builds the clone url from
+# the CI_SERVER_* triple + CI_JOB_TOKEN rather than from CI_REPOSITORY_URL. That
+# is equally CI-derived and must pass, or check 11 is not "the source is pinned to
+# this pipeline's server", just "the source is spelled ${ORG_BASE}".
+SERVERVAR="${WORK}/serverurl"
+mkdir -p "$SERVERVAR"
+seed_scripts "$SERVERVAR"
+awk '
+  /^    - ORG_BASE=/ { next }
+  {
+    if ($0 ~ /git clone --depth 1/) {
+      sub(/"\$\{ORG_BASE\}\/hugmesh-generator\.git"/,
+          "\"${CI_SERVER_PROTOCOL}://gitlab-ci-token:${CI_JOB_TOKEN}@${CI_SERVER_HOST}:${CI_SERVER_PORT}/hugmesh/hugmesh-generator.git\"")
+    }
+    print
+  }
+' "$REAL_CI" > "${SERVERVAR}/.gitlab-ci.yml"
+if cmp -s "$REAL_CI" "${SERVERVAR}/.gitlab-ci.yml"; then
+  report fail "CI_SERVER_* clone-shape control did not change the file"
+elif bash "$GUARD" "${SERVERVAR}/.gitlab-ci.yml" "$SERVERVAR" >"${SERVERVAR}/out.log" 2>&1; then
+  report pass "a clone url built from CI_SERVER_*/CI_JOB_TOKEN is accepted (positive control)"
+else
+  report fail "the CI_SERVER_* clone shape was rejected — check 11 is over-fitted to \${ORG_BASE}"
+  cat "${SERVERVAR}/out.log" >&2
 fi
 
 printf '\n%d passed, %d failed\n' "$PASS" "$FAIL"
