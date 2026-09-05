@@ -119,6 +119,39 @@ accept() {
   fi
 }
 
+# mutate_msg <name> <awk program> <fragment>: as mutate(), and the FAIL the guard
+# prints must be the one that DIAGNOSES this break, not merely some failure.
+#
+# Most checks here need only detection, so mutate() asks only for a non-zero exit.
+# A few exist purely to give the RIGHT diagnosis where a later check would red the
+# file anyway — the flow-style `rules:` branch of check 9c is one: a rules: list
+# the guard cannot read yields no coverage either, so 9c reds it regardless, and a
+# pass/fail-only test cannot tell the two apart. Deleting that branch left this
+# battery at full green until this helper existed.
+mutate_msg() {
+  local name
+  name="$1"
+  local prog
+  prog="$2"
+  local want
+  want="$3"
+  local dir
+  dir="${WORK}/d$((PASS + FAIL))"
+  mkdir -p "$dir"
+  seed_scripts "$dir"
+  awk "$prog" "$REAL_CI" > "${dir}/.gitlab-ci.yml"
+  if cmp -s "$REAL_CI" "${dir}/.gitlab-ci.yml"; then
+    report fail "mutation '${name}' did NOT change the file — the mutation itself is broken"
+  elif bash "$GUARD" "${dir}/.gitlab-ci.yml" "$dir" >"${dir}/out.log" 2>&1; then
+    report fail "mutation '${name}' was NOT detected (guard still passed)"
+  elif grep -F "$want" "${dir}/out.log" >/dev/null; then
+    report pass "mutation '${name}' detected, and diagnosed"
+  else
+    report fail "mutation '${name}' was detected but NOT diagnosed — no FAIL mentioned '${want}'"
+    cat "${dir}/out.log" >&2
+  fi
+}
+
 mutate "drop the generator include" '
   /^include:/ { skip = 1; next }
   skip && /^[^ \t#]/ { skip = 0 }
@@ -368,6 +401,128 @@ mutate "allow_failure: exit_codes: on the wiring guard job" '
   { print }
 '
 
+# --- the mutations that leave the JOB perfect and delete the SCAN -------------
+# `extends:` REPLACES arrays — the mechanism checks 6 and 6c already exist for —
+# and `script:` is where the scan itself lives. Every one of these leaves the job
+# name, the stage, allow_failure, needs, the harness fetch, the ref pin and the
+# !reference splice exactly as they are; the pipeline shows a `pentest:dast` entry
+# that ran an echo. That is not a near-miss of the failure this guard exists for,
+# it IS that failure in two lines.
+mutate "pentest:dast overrides script: (the job scans nothing and looks perfect)" '
+  /^pentest:dast:/ { print; print "  script:"; print "    - echo DAST-temporarily-disabled"; next }
+  { print }
+'
+
+mutate "pentest:sca overrides script:" '
+  /^pentest:sca:/ { print; print "  script:"; print "    - echo SCA-temporarily-disabled"; next }
+  { print }
+'
+
+# ...and the same edit dressed to look like the real thing: it names the harness,
+# it runs the harness, and it scans nothing.
+mutate "pentest:dast script: overridden with a harness --help" '
+  /^pentest:dast:/ { print; print "  script:"; print "    - bash \"${PENTEST_HARNESS_DIR}/run-pentest.sh\" --help"; next }
+  { print }
+'
+
+# --- the mutations that neuter the guard job from OUTSIDE its script: ---------
+# GitLab concatenates before_script and script into ONE shell, so `exit 0` in a
+# before_script ends the job SUCCESSFUL having run nothing. The job's own
+# before_script does it; so does a top-level `default:`, which applies to every
+# job that declares none — and lint:ci-wiring is exactly such a job.
+mutate "before_script: exit 0 on the guard job (the shell ends before the battery)" '
+  /^lint:ci-wiring:/ { print; print "  before_script:"; print "    - exit 0"; next }
+  { print }
+'
+
+mutate "a top-level default: before_script: exit 0 (shadows the guard job, which declares none)" '
+  NR == 1 { print "default:"; print "  before_script:"; print "    - exit 0"; print "" }
+  { print }
+'
+
+# --- the invocation-neutering spellings one keystroke from `|| true` ----------
+# `;` is `|| true` with one character changed: the shell takes the LAST command
+# status either way. `&` never takes it at all. An if-wrapper takes the branch
+# instead. All three left the first form of check 9d printing "ok".
+mutate "the battery invocation followed by ; true (last status wins)" '
+  { sub(/- bash scripts\/check-ci-wiring\.test\.sh$/, "- bash scripts/check-ci-wiring.test.sh; true"); print }
+'
+
+mutate "the battery backgrounded with a trailing & (its status is never taken)" '
+  { sub(/- bash scripts\/check-ci-wiring\.test\.sh$/, "- bash scripts/check-ci-wiring.test.sh \\&"); print }
+'
+
+mutate "the battery wrapped in an if (the job takes the branch, not the battery)" '
+  { sub(/- bash scripts\/check-ci-wiring\.test\.sh$/, "- if bash scripts/check-ci-wiring.test.sh; then echo clean; else echo dirty; fi"); print }
+'
+
+# ...and the same class with no ';' anywhere, so ONLY the construct test can catch
+# it. Without this case, deleting that test left the battery at full green: the
+# if-wrapper above also carries semicolons, and the ';' test caught it instead.
+mutate "the battery invocation NEGATED with a leading ! (a failing battery greens the job)" '
+  { sub(/- bash scripts\/check-ci-wiring\.test\.sh$/, "- ! bash scripts/check-ci-wiring.test.sh"); print }
+'
+
+# --- the rules: edits that leave the condition spelled out and match nothing ---
+# `changes:` is the likelier real edit than a narrowed `if:` ever was: both if:
+# strings stay literally present in the file, so any grep over the flat rules list
+# still finds them, while the job is created on essentially no pipeline — every
+# merge request that edits only scripts/ included.
+mutate "the guard job's rules: narrowed by changes: (both if: strings still present)" '
+  /^lint:ci-wiring:/ { injob = 1 }
+  injob && /^[^ \t#]/ && !/^lint:ci-wiring:/ { injob = 0 }
+  injob && /^    - if:/ { print; print "      changes: [\"deploy/**\"]"; next }
+  { print }
+'
+
+# A rules: set this guard cannot READ is a rules: set that can retire it while
+# check 9c prints ok — the same "unreadable therefore green" hole as every other
+# one in this file.
+mutate_msg "the guard job's rules: rewritten in flow style (unreadable to the guard)" '
+  /^lint:ci-wiring:/ { injob = 1 }
+  injob && /^[^ \t#]/ && !/^lint:ci-wiring:/ { injob = 0 }
+  injob && /^  rules:$/ { print "  rules: [{ if: $CI_COMMIT_TAG }]"; inrules = 1; next }
+  inrules && /^    - if:/ { next }
+  inrules && !/^    - if:/ { inrules = 0 }
+  { print }
+' "not in the block form this guard can read"
+
+# --- the edit that retires the guard AND both scans, one level up -------------
+# $CI_COMMIT_BRANCH is unset on a merge_request_event, so this workflow: creates
+# no merge-request pipeline at all: lint:ci-wiring, pentest:sca and pentest:dast
+# vanish together, with no forbidden word anywhere. `workflow` is in the reserved
+# skip list checks 8 and 9 use to tell jobs from configuration, which is exactly
+# why nothing looked at it.
+mutate "a top-level workflow: rules: that creates no merge-request pipeline" '
+  NR == 1 { print "workflow:"; print "  rules:"; print "    - if: $CI_COMMIT_BRANCH == $CI_DEFAULT_BRANCH"; print "" }
+  { print }
+'
+
+# --- the include:, where a neighbouring name is worse than on the clone -------
+# The include supplies .pentest-dast-base's entire before_script (a curl plus an
+# `unzip -d /usr/local/bin/`) and .pentest-dast-baseline's script, both of which
+# then run on the `privileged` runner: here the template IS the executed code.
+# `grep -F "hugmesh/hugmesh-generator"` is satisfied by a fork of that name, and
+# with the clone line untouched every other check passes too.
+mutate "the include: names a NEIGHBOUR of the generator (substring-satisfying fork)" '
+  /^[[:space:]]*- project:/ { sub(/hugmesh-generator/, "hugmesh-generator-fork") }
+  { print }
+'
+
+mutate "the include: names a different template file in the same repo" '
+  /^[[:space:]]*file:/ { sub(/pentest-stage\.gitlab-ci\.yml/, "pentest-stage-lite.gitlab-ci.yml") }
+  { print }
+'
+
+# The last-assignment-wins mutation above uses a LITERAL url, which the first half
+# of check 11's per-assignment loop (must begin with an expansion) catches on its
+# own — so the second half (must name a CI_ variable) had no test of its own, and
+# deleting it left this battery at full green. A second assignment that IS an
+# expansion, of a variable this pipeline does not define, is that test.
+mutate "a SECOND ORG_BASE= assignment from a NON-CI variable (expansion, still unpinned)" '
+  { print; if ($0 ~ /^    - ORG_BASE=/) print "    - ORG_BASE=\"${MIRROR_BASE}/mirror\"" }
+'
+
 # --- leg 4: positive control for the VENDORED branch -------------------------
 # The guard must accept the other legitimate shape (harness vendored at the
 # template's default path, no PENTEST_HARNESS_DIR override), or it is not a
@@ -506,6 +661,64 @@ accept "the guard job with no rules: at all (it then runs on every pipeline)" '
   injob && /^  rules:$/ { inrules = 1; next }
   inrules && /^    - if:/ { next }
   inrules && !/^    - if:/ { inrules = 0 }
+  { print }
+'
+
+# `--branch main`, `--branch=main` and `-b main` are the same command line. Check
+# 6b's first form was a sed that demanded whitespace after `--branch`, so the
+# equals spelling reported "include: pins ref 'main' but the harness clone takes
+# branch '<none>'" — a template/harness-skew accusation against an identical edit,
+# the same class as the `--quiet` false positive directly above.
+accept "the equals spelling --branch=main on the harness clone" '
+  { if ($0 ~ /git clone --depth 1/) sub(/--branch main/, "--branch=main"); print }
+'
+
+# ...and `${ORG_BASE}/x` vs `$ORG_BASE/x`. Check 11 anchored on the braced form
+# only, so dropping the braces produced "does not start with a CI-derived variable
+# … never a literal host": a supply-chain accusation against identical shell.
+accept "the unbraced spelling \$ORG_BASE on the harness clone" '
+  { if ($0 ~ /git clone --depth 1/) sub(/\$\{ORG_BASE\}/, "$ORG_BASE"); print }
+'
+
+# A `when:` inside a rules: entry gates THAT ENTRY, not the job. Check 9b grepped
+# the whole job body, so "do not lint tag pipelines" — which leaves merge-request
+# and default-branch coverage completely intact — was reported as "it would not run
+# on a merge request or the default branch".
+accept "a when: never rule that excludes only TAG pipelines" '
+  /^lint:ci-wiring:/ { injob = 1 }
+  injob && /^[^ \t#]/ && !/^lint:ci-wiring:/ { injob = 0 }
+  injob && /CI_COMMIT_TAG/ { print "    - if: $CI_COMMIT_TAG"; print "      when: never"; next }
+  { print }
+'
+
+# Widening check 9d to `;` and `&` must not catch an ordinary redirect: `2>&1`
+# contains an `&` and changes nothing about whose exit status the job takes.
+accept "the battery invocation redirected to a log file (> wiring.log 2>&1)" '
+  { sub(/- bash scripts\/check-ci-wiring\.test\.sh$/, "- bash scripts/check-ci-wiring.test.sh > wiring.log 2>\\&1"); print }
+'
+
+# ...nor an `&&`, which short-circuits on failure and so PRESERVES the battery's
+# status, unlike the `;` and `&` next to it.
+accept "the battery invocation followed by && echo (status still the battery's)" '
+  { sub(/- bash scripts\/check-ci-wiring\.test\.sh$/, "- bash scripts/check-ci-wiring.test.sh \\&\\& echo wiring ok"); print }
+'
+
+# Check 12 must reject a workflow: that suppresses pipelines, not the key itself.
+accept "a top-level workflow: rules: that still covers merge requests and the default branch" '
+  NR == 1 {
+    print "workflow:"
+    print "  rules:"
+    print "    - if: $CI_PIPELINE_SOURCE == \"merge_request_event\""
+    print "    - if: $CI_COMMIT_BRANCH == $CI_DEFAULT_BRANCH"
+    print ""
+  }
+  { print }
+'
+
+# ...and reading `default: before_script` must reject only what NEUTERS the
+# battery, not the key itself.
+accept "a harmless top-level default: before_script" '
+  NR == 1 { print "default:"; print "  before_script:"; print "    - echo starting"; print "" }
   { print }
 '
 
