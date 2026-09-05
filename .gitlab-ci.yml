@@ -22,11 +22,14 @@ stages: [lint, build, pentest]
 # The pen-test stage is allow_failure by policy, so nothing in the pipeline view
 # distinguishes "DAST ran and found nothing" from "DAST could not run at all".
 # This job asserts the wiring in THIS file is structurally capable of scanning
-# (harness reachable at PENTEST_HARNESS_DIR, base before_script not silently
-# replaced, allow_failure still present, both scans automatic rather than
-# `when: manual`, harness fetched from an origin this pipeline derives rather than
-# a literal host) — and, because none of that survives the guard itself being
-# quietly retired, that THIS job still runs the battery, blocking and unattended.
+# (harness reachable at PENTEST_HARNESS_DIR, base before_script AND script not
+# silently replaced by `extends:` array replacement, allow_failure still present,
+# both scans automatic rather than `when: manual`, harness fetched from an origin
+# this pipeline derives rather than a literal host, and the shared template pulled
+# from the generator itself rather than a neighbouring name) — and, because none of
+# that survives the guard itself being quietly retired, that THIS job still runs
+# the battery, blocking and unattended, on pipelines a top-level `workflow:` has
+# not suppressed.
 # It then mutation-tests the guard against deliberately-broken copies, so a green
 # tick here means the checks can actually fail. Pure bash — no image, no Docker,
 # no network.
@@ -125,7 +128,7 @@ pentest:sca:
 # generator's env-test-build (`make stack-up`) and points ZAP at the two-brand
 # gateway front door. That front door DOES cover this repo's surface — the stack
 # builds a `hugmesh-api-docs` service (tests/stack/compose.local.yaml) and the
-# gateway routes `Path=/api-docs/**` to it (gateway-routes/fe/application-routes.yml)
+# gateway routes `Path=/api-docs/**` to it (tests/stack/gateway-routes/fe/application-routes.yml)
 # — which is why DAST_TARGET, the harness's documented per-repo target override
 # (tests/pentest/env/compose.env), is deliberately LEFT UNSET here: this service is
 # not "not the compose gateway", it is behind it.

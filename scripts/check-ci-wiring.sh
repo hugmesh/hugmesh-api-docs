@@ -21,7 +21,17 @@
 # (`extends:` REPLACES arrays), and that no job in this file is gated behind an
 # earlier stage implicitly.
 #
-# It then asserts the same thing about ITSELF (checks 9-11), because everything
+# The scan itself lives in an array too. `extends:` REPLACES arrays — the reason
+# checks 6 and 6c exist — and `script:` is the array the scan is written in, so two
+# lines on pentest:dast
+#     script:
+#       - echo DAST-temporarily-disabled
+# left the job name, the stage, allow_failure, needs, the harness fetch, the ref
+# pin and the !reference splice all untouched, every check above printing "ok", and
+# the job running an echo. Check 6d closes that; it is the shortest possible
+# spelling of the exact failure the first paragraph describes.
+#
+# It then asserts the same thing about ITSELF (checks 9-12), because everything
 # above is only worth the paper it is printed on if something still RUNS it and
 # the scans it guards still RUN unattended. Five edits that touch no pen-test job
 # at all — allow_failure or `when: manual` on the job that runs this battery,
@@ -31,6 +41,32 @@
 # (allow_failure makes a FINDING non-blocking; `when: manual` makes the SCAN
 # optional and still shows the job), and so did swapping the harness fetch's
 # CI-derived origin for a literal host.
+#
+# And the same edits keep arriving one level out from wherever the last check
+# looked, so checks 9-12 look there too:
+#   * GitLab concatenates before_script and script into ONE shell, so an `exit 0`
+#     in the guard job's own before_script — or in a top-level `default:
+#     before_script`, which applies to every job declaring none, and this one
+#     declares none — ends that shell SUCCESSFUL having run nothing         (9d)
+#   * `;` is `|| true` with one character changed, `&` never takes the status at
+#     all, and a wrapping `if` or `!` takes its own                         (9d)
+#   * a `changes:` clause leaves both `if:` conditions literally present in the
+#     file while creating the job on essentially no pipeline                (9c)
+#   * a top-level `workflow: rules:` deletes the guard AND both scans together:
+#     $CI_COMMIT_BRANCH is unset on a merge_request_event, so a lone default-branch
+#     rule there suppresses every merge-request pipeline. `workflow` is in the
+#     reserved-key list checks 8 and 9 skip to tell jobs from configuration, which
+#     is exactly why nothing had looked at it                          (check 12)
+#   * and `include:` was matched by SUBSTRING, so `hugmesh/hugmesh-generator-fork`
+#     satisfied it — the same hole check 11 closes on the clone, on the side where
+#     the template IS the code the privileged runner executes         (check 1)
+#
+# The mirror of all that is FALSE POSITIVES, which are how a guard gets clicked
+# past: `--branch=main`, an unbraced `$ORG_BASE`, a `when: never` rule that
+# excludes only tag pipelines, and a `2>&1` on the invocation are each identical in
+# meaning to a spelling this file already accepts, and each of them used to red the
+# pipeline with a supply-chain- or retirement-shaped accusation. They are tested as
+# hard as the rejections (check-ci-wiring.test.sh, leg 9).
 #
 # Pure bash + grep/sed: no YAML library, no network, no Docker — it must be
 # runnable on the plain shell runner and in a pre-commit hook.
@@ -85,14 +121,35 @@ code_only() {
   sed -e 's/[[:space:]]*#.*$//' "$CI_FILE"
 }
 
+# The shallowest indentation in a job body — i.e. the column its OWN keys sit at.
+# block_of() drops the `job:` line, so every remaining line is indented, and the
+# job-level keys are the least-indented of them.
+job_min_indent() {
+  printf '%s\n' "$1" | awk '
+    /[^[:space:]]/ { match($0, /^[[:space:]]*/); if (m == 0 || RLENGTH < m) m = RLENGTH }
+    END { print (m ? m : 2) }
+  '
+}
+
 # `when: manual`, `when: "manual"` and `when: 'manual'` are the SAME YAML. The
 # first form of checks 9 and 10 grepped for the bare word, so QUOTING it — one
 # keystroke, nothing a reviewer would stop on — retired the guard job and either
 # pen-test job while every check kept printing "ok". Same class as the mutations
 # those checks were written to catch, one spelling away.
+#
+# SCOPED TO THE JOB'S OWN KEYS, not the whole body. A `when:` nested inside a
+# `rules:` entry gates THAT ENTRY, not the job, and reading the two as the same
+# thing red-lit `- if: $CI_COMMIT_TAG` / `when: never` — an entirely ordinary
+# "don't lint tag pipelines" rule that leaves merge-request and default-branch
+# coverage fully intact — with "it would not run on a merge request or the default
+# branch". A guard whose false positives are one ordinary rule away is a guard
+# people learn to click past. Rules-level gating is check 9c's job, and it now
+# discounts a manual/never/delayed entry from COVERAGE instead (see rules_cover).
 has_gated_when() {
+  local ind
+  ind="$(job_min_indent "$1")"
   printf '%s\n' "$1" |
-    grep -E "^[[:space:]]+when:[[:space:]]*['\"]?(manual|never|delayed)['\"]?[[:space:]]*\$" >/dev/null
+    grep -E "^[[:space:]]{${ind}}when:[[:space:]]*['\"]?(manual|never|delayed)['\"]?[[:space:]]*\$" >/dev/null
 }
 
 # `allow_failure: true` is one spelling of "this job cannot red the pipeline".
@@ -128,6 +185,61 @@ list_items() {
       inl = 0
     }
   '
+}
+
+# A `rules:` list re-grouped one ENTRY per line: the `- if:` line with each of its
+# continuation lines (`changes:`, `exists:`, `when:`) appended after a ` ~ `, so a
+# clause always travels with the condition it narrows. list_items() alone returns a
+# flat line list, and asking "does this job's rules: mention merge_request_event?"
+# of a flat list cannot see that the rule which mentions it also carries a
+# `changes:` that switches it off on every pipeline but one.
+rules_entries() {
+  list_items "$1" rules | awk '
+    /^[[:space:]]*-[[:space:]]/ { if (n) print buf; buf = $0; n = 1; next }
+    n { sub(/^[[:space:]]*/, " ~ "); buf = buf $0; next }
+    END { if (n) print buf }
+  '
+}
+
+# rules_cover <rules-block>: which of "merge requests" / "the default branch" a
+# rules: list actually COVERS, printed as two 0/1 flags.
+#
+# An entry only counts when it can create the pipeline unconditionally:
+#   * `when: never` on the entry means it EXCLUDES rather than includes;
+#   * `when: manual` / `delayed` creates a job nobody runs unattended, which is the
+#     very thing check 9b rejects at the job level;
+#   * a `changes:` or `exists:` clause narrows the entry to a subset of diffs, so
+#     the pipeline it names is NOT covered. This is the likelier real edit than
+#     `when: manual` ever was: `- if: <merge request>` + `changes: [deploy/**]`
+#     leaves both `if:` strings literally present in the file — satisfying any
+#     grep over the flat list — while the job is created on essentially nothing,
+#     including every merge request that edits only scripts/.
+rules_cover() {
+  local mr
+  mr=0
+  local def
+  def=0
+  local entry
+  while IFS= read -r entry; do
+    [ -n "$entry" ] || continue
+    case "$entry" in
+      *'when: never'*|*'when: "never"'*|*"when: 'never'"*) continue ;;
+      *'when: manual'*|*'when: "manual"'*|*"when: 'manual'"*) continue ;;
+      *'when: delayed'*|*'when: "delayed"'*|*"when: 'delayed'"*) continue ;;
+    esac
+    if printf '%s\n' "$entry" | grep -E '(changes|exists):' >/dev/null; then
+      continue
+    fi
+    if printf '%s\n' "$entry" |
+         grep -E 'merge_request_event|CI_MERGE_REQUEST_(IID|ID)' >/dev/null; then
+      mr=1
+    fi
+    if printf '%s\n' "$entry" |
+         grep -E "CI_DEFAULT_BRANCH|CI_COMMIT_(BRANCH|REF_NAME)[[:space:]]*==[[:space:]]*[\"']" >/dev/null; then
+      def=1
+    fi
+  done <<< "$(rules_entries "$1")"
+  printf '%s %s\n' "$mr" "$def"
 }
 
 # The POSITIONAL arguments of a `git clone` command line, one per line: quotes
@@ -168,6 +280,43 @@ clone_args() {
     }'
 }
 
+# EVERY token of a `git clone` command line, flags included, quotes honoured.
+# clone_args() above deliberately throws the flags away; check 6b needs the VALUE
+# of one of them.
+clone_tokens() {
+  printf '%s\n' "$1" | awk '
+    {
+      sub(/^.*git[[:space:]]+clone[[:space:]]+/, "")
+      cur = ""; inq = 0; started = 0
+      for (i = 1; i <= length($0); i++) {
+        c = substr($0, i, 1)
+        if (c == "\"") { inq = !inq; started = 1; continue }
+        if (!inq && (c == " " || c == "\t")) {
+          if (started) { print cur; cur = ""; started = 0 }
+          continue
+        }
+        cur = cur c; started = 1
+      }
+      if (started) print cur
+    }'
+}
+
+# The branch a `git clone` line takes, in BOTH spellings GNU git accepts.
+# `--branch main`, `--branch=main` and `-b main` are the same command line; the
+# first form of check 6b was a sed that required whitespace after `--branch`, so
+# `--branch=main` reported "include: pins ref 'main' but the harness clone takes
+# branch '<none>' — the job would run one version's harness against another
+# version's template", a supply-chain-shaped accusation against a semantically
+# identical edit. Same false-positive class as the trailing `--quiet` that
+# clone_args() exists to absorb.
+clone_branch() {
+  clone_tokens "$1" | awk '
+    take { print; exit }
+    /^(--branch|-b)$/ { take = 1; next }
+    /^(--branch|-b)=/ { sub(/^[^=]*=/, ""); print; exit }
+  '
+}
+
 if [ ! -f "$CI_FILE" ]; then
   printf 'FATAL: no CI file at %s\n' "$CI_FILE" >&2
   exit 2
@@ -176,13 +325,18 @@ fi
 printf '== check-ci-wiring: %s\n' "$CI_FILE"
 
 # -- 1. the shared pen-test template is included -------------------------------
+# The project name is matched EXACTLY, not as a substring — the same hole check 11
+# closes on the clone, on the higher-value side of the pair. `grep -F
+# "hugmesh/hugmesh-generator"` is satisfied by
+# `project: 'hugmesh/hugmesh-generator-fork'`, and with the clone line left alone
+# every other check in this file passes too, so the guard exits 0 while the
+# include supplies .pentest-dast-base's entire before_script (a curl plus an
+# `unzip -d /usr/local/bin/`) and .pentest-dast-baseline's script, both of which
+# then execute on the `privileged` runner. Here the template IS the executed code,
+# so a neighbouring name matters more here than it does on the clone.
 INCLUDE_BLOCK="$(block_of include)"
-if printf '%s\n' "$INCLUDE_BLOCK" | grep -F "hugmesh/hugmesh-generator" >/dev/null &&
-   printf '%s\n' "$INCLUDE_BLOCK" | grep -F "/tests/pentest/ci/pentest-stage.gitlab-ci.yml" >/dev/null; then
-  ok "includes the generator's pentest-stage template"
-else
-  fail "no include: of hugmesh/hugmesh-generator /tests/pentest/ci/pentest-stage.gitlab-ci.yml"
-fi
+INC_PROJECT="$(printf '%s\n' "$INCLUDE_BLOCK" |
+  sed -n "s/^[[:space:]]*-\{0,1\}[[:space:]]*project:[[:space:]]*['\"]\{0,1\}\([^'\"[:space:]]*\).*/\1/p" | head -1)"
 
 # The ref and the template path the include: names are load-bearing for checks 5
 # and 6b below: the harness is fetched from the SAME repo at the SAME ref, and it
@@ -197,8 +351,31 @@ case "$INC_FILE" in
 esac
 [ -n "$TPL_HARNESS" ] || TPL_HARNESS="tests/pentest"
 
+INC_OK=1
+case "$INC_PROJECT" in
+  */hugmesh-generator) ;;
+  '') INC_OK=0
+      fail "no include: with a 'project:' — nothing pulls in the shared pen-test template, so .pentest-sca / .pentest-dast-baseline do not exist and both jobs are hard pipeline errors" ;;
+  *)  INC_OK=0
+      fail "include: names project '${INC_PROJECT}', which is not <group>/hugmesh-generator. A neighbouring name ('hugmesh/hugmesh-generator-fork') satisfies a substring test while supplying the before_script and script this pipeline then executes on the privileged runner — the same hole check 11 closes on the clone, on the side where the template IS the executed code." ;;
+esac
+if [ "$INC_OK" -eq 1 ] && [ "$INC_FILE" != "/tests/pentest/ci/pentest-stage.gitlab-ci.yml" ]; then
+  INC_OK=0
+  fail "include: names file '${INC_FILE:-<none>}', not '/tests/pentest/ci/pentest-stage.gitlab-ci.yml' — a different file in the same repo defines different (or no) .pentest-* jobs"
+fi
+[ "$INC_OK" -eq 1 ] && ok "includes ${INC_PROJECT}${INC_FILE} (project and file matched exactly, not as substrings)"
+
 # -- 2. the pentest stage is declared ------------------------------------------
-if code_only | grep -E '^stages:.*\bpentest\b' >/dev/null; then
+# The declared stage list, read from either YAML spelling — `stages: [a, b]` or a
+# block list — because check 7 and check 8 both need it as a list anyway, and
+# because asking the question as a regex over the raw line answered it only for
+# the flow spelling. (It also drops this file's one GNU-only construct, a `\b`
+# word boundary, which mawk-era runners and busybox grep do not owe us.)
+DECLARED="$(code_only | sed -n 's/^stages:[[:space:]]*\[\(.*\)\].*/\1/p' | tr -d ' ' | tr ',' '\n')"
+if [ -z "$DECLARED" ]; then
+  DECLARED="$(block_of stages | sed -n 's/^[[:space:]]*-[[:space:]]*//p')"
+fi
+if printf '%s\n' "$DECLARED" | grep -Fx 'pentest' >/dev/null; then
   ok "'pentest' is in stages:"
 else
   fail "'pentest' missing from stages: — the extending jobs would not run"
@@ -268,8 +445,7 @@ CLONE_POS="$(clone_args "$CLONE_LINE")"
 CLONE_SRC="$(printf '%s\n' "$CLONE_POS" | sed -n '1p')"
 CLONE_DEST="$(printf '%s\n' "$CLONE_POS" | sed -n '2p')"
 CLONE_REL="${CLONE_DEST#\$\{CI_PROJECT_DIR\}/}"
-CLONE_BRANCH="$(printf '%s\n' "$CLONE_LINE" |
-  sed -n 's/^.*git clone .*--branch[[:space:]]\{1,\}"\{0,1\}\([^[:space:]"]*\).*/\1/p')"
+CLONE_BRANCH="$(clone_branch "$CLONE_LINE")"
 
 if [ -z "$HARNESS_DIR" ]; then
   if [ -f "${REPO_ROOT}/${TPL_HARNESS}/run-pentest.sh" ]; then
@@ -345,13 +521,44 @@ for pjob in pentest:sca pentest:dast; do
   fi
 done
 
+# -- 6d. `script:` must be INHERITED too — that is where the SCAN lives ---------
+# The same mechanism as checks 6 and 6c, applied to the one array that IS the
+# scan. `.pentest-sca` and `.pentest-dast-baseline` each declare a `script:`; a
+# job that extends one of them and states its own REPLACES it wholesale. Two
+# lines on pentest:dast —
+#     script:
+#       - echo DAST-temporarily-disabled
+# — leave the job name, the stage, allow_failure, the harness fetch, the ref pin
+# and the !reference splice all exactly as they are, and every other check in this
+# file printed "ok" while the job's only command was an echo. That is not a
+# near-miss of the failure this guard exists for, it IS the failure this guard
+# exists for, written in the shortest possible form: "the org-wide failure mode is
+# not a missing job, it is a job that LOOKS like it scanned."
+#
+# An override is only accepted when it splices the base's script back in with
+# `!reference [<the job's own extends: target>, script]`, the same escape hatch
+# check 6 allows for before_script.
+for pjob in pentest:sca pentest:dast; do
+  PJ_BODY="$(block_of "$pjob")"
+  [ -n "$PJ_BODY" ] || continue
+  if ! printf '%s\n' "$PJ_BODY" | grep -E '^[[:space:]]+script:' >/dev/null; then
+    ok "$pjob inherits the base's script: — the scan itself is not overridden"
+    continue
+  fi
+  PJ_BASE="$(printf '%s\n' "$PJ_BODY" |
+    sed -n 's/^[[:space:]]*extends:[[:space:]]*\(\.[A-Za-z0-9_.-]*\).*/\1/p' | head -1)"
+  if [ -n "$PJ_BASE" ] &&
+     printf '%s\n' "$(list_items "$PJ_BODY" script)" |
+       grep -F "!reference [${PJ_BASE}, script]" >/dev/null; then
+    ok "$pjob overrides script: but splices ${PJ_BASE}'s own script back with !reference"
+  else
+    fail "$pjob overrides script: — extends: REPLACES arrays, so the base's scan is dropped wholesale and the job runs only what is written here. This is the whole failure mode in two lines: the job, its stage, allow_failure, the harness fetch and the ref pin all survive, and the pipeline still shows a '$pjob' entry. Inherit it, or splice it back with '!reference [${PJ_BASE:-<the base>}, script]'."
+  fi
+done
+
 # -- 7. every job's stage is declared ------------------------------------------
 # A job whose `stage:` is not in `stages:` is a hard pipeline error, and it is an
 # easy one to introduce when adding a stage list to a previously single-stage file.
-DECLARED="$(code_only | sed -n 's/^stages:[[:space:]]*\[\(.*\)\].*/\1/p' | tr -d ' ' | tr ',' '\n')"
-if [ -z "$DECLARED" ]; then
-  DECLARED="$(block_of stages | sed -n 's/^[[:space:]]*-[[:space:]]*//p')"
-fi
 UNDECLARED=0
 while read -r used; do
   [ -n "$used" ] || continue
@@ -529,23 +736,29 @@ else
   # `when: manual` ever was — retires the guard just as completely, and left every
   # other check printing "ok".
   GUARD_RULES="$(list_items "$GUARD_BODY" rules)"
-  if [ -z "$GUARD_RULES" ]; then
+  if ! printf '%s\n' "$GUARD_BODY" | grep -E '^[[:space:]]+rules:' >/dev/null; then
     ok "$GUARD_JOB declares no rules: — it runs on every pipeline"
+  elif [ -z "$GUARD_RULES" ]; then
+    # `rules: [...]` on one line, or `rules: []`. The block form is the only shape
+    # this guard can read, and a rules: set it cannot read is a rules: set that can
+    # retire it while this check prints "ok" — the same "unreadable therefore
+    # green" hole as every other one in this file.
+    fail "$GUARD_JOB's rules: are not in the block form this guard can read (flow style, or an empty list). An empty rules: creates the job on NO pipeline; a flow-style one cannot be checked for coverage at all. Write them as a block list, or drop rules: altogether."
   else
     # Accept every spelling that COVERS the pipeline, not just the org's usual
     # one — a check that reds `$CI_COMMIT_BRANCH == "main"` is a false positive of
-    # exactly the kind this commit is removing elsewhere.
+    # exactly the kind this commit is removing elsewhere. But COVERS is the word:
+    # a rule narrowed by `changes:`/`exists:`, or one carrying its own
+    # `when: never/manual/delayed`, names a pipeline without covering it. See
+    # rules_cover().
+    read -r RULES_MR RULES_DEF <<< "$(rules_cover "$GUARD_BODY")"
     RULES_MISS=""
-    printf '%s\n' "$GUARD_RULES" |
-      grep -E 'merge_request_event|CI_MERGE_REQUEST_(IID|ID)' >/dev/null ||
-      RULES_MISS="${RULES_MISS} merge requests,"
-    printf '%s\n' "$GUARD_RULES" |
-      grep -E "CI_DEFAULT_BRANCH|CI_COMMIT_(BRANCH|REF_NAME)[[:space:]]*==[[:space:]]*[\"']" >/dev/null ||
-      RULES_MISS="${RULES_MISS} the default branch,"
+    [ "$RULES_MR" -eq 1 ] || RULES_MISS="${RULES_MISS} merge requests,"
+    [ "$RULES_DEF" -eq 1 ] || RULES_MISS="${RULES_MISS} the default branch,"
     if [ -n "$RULES_MISS" ]; then
-      fail "$GUARD_JOB's rules: do not cover${RULES_MISS%,} — a rules: set that never matches retires this guard exactly as when: manual does, without using the word. Keep an '\$CI_PIPELINE_SOURCE == \"merge_request_event\"' rule and a '\$CI_COMMIT_BRANCH == \$CI_DEFAULT_BRANCH' rule, or drop rules: altogether."
+      fail "$GUARD_JOB's rules: do not cover${RULES_MISS%,} — a rules: set that never matches retires this guard exactly as when: manual does, without using the word. A rule that names the pipeline but carries a 'changes:'/'exists:' clause, or its own 'when: never/manual/delayed', does not count: the condition is still spelled out in the file while the job is created on essentially nothing. Keep an unconditional '\$CI_PIPELINE_SOURCE == \"merge_request_event\"' rule and an unconditional '\$CI_COMMIT_BRANCH == \$CI_DEFAULT_BRANCH' rule, or drop rules: altogether."
     else
-      ok "$GUARD_JOB's rules: cover merge requests and the default branch"
+      ok "$GUARD_JOB's rules: cover merge requests and the default branch, unconditionally"
     fi
   fi
 
@@ -555,18 +768,60 @@ else
   # the pipeline — the same neutering class as allow_failure, spelled in shell
   # instead of YAML. A pipe counts too: GitLab does not set pipefail, so
   # `… | tee log` hands the job tee's exit status.
+  # GitLab concatenates before_script and script into ONE shell script, so what
+  # runs before the battery is not only the earlier `script:` items. A job's own
+  # `before_script: [- exit 0]` ends that shell SUCCESSFUL having run nothing, and
+  # so does a top-level `default: before_script:` (which applies to every job that
+  # declares none — and lint:ci-wiring is precisely such a job, which is why the
+  # argument that a default cannot shadow the pen-test jobs "because both already
+  # define one" does not cover the job this check is about). The deprecated
+  # column-0 `before_script:` is the same key by another name.
+  GUARD_PRE="$(list_items "$GUARD_BODY" before_script)"
+  if [ -z "$GUARD_PRE" ]; then
+    GUARD_PRE="$(list_items "$(block_of default)" before_script)"
+  fi
+  if [ -z "$GUARD_PRE" ]; then
+    GUARD_PRE="$(block_of before_script)"
+  fi
   GUARD_RUN_ITEMS="$(list_items "$GUARD_BODY" script)"
+  if [ -n "$GUARD_PRE" ]; then
+    GUARD_RUN_ITEMS="$(printf '%s\n%s\n' "$GUARD_PRE" "$GUARD_RUN_ITEMS")"
+  fi
   if ! printf '%s\n' "$GUARD_RUN_ITEMS" | grep -F 'check-ci-wiring.test.sh' >/dev/null; then
-    GUARD_RUN_ITEMS="$GUARD_BODY"          # invoked from before_script/after_script
+    GUARD_RUN_ITEMS="$GUARD_BODY"          # invoked from after_script, or an odd shape
   fi
   INV_LNO="$(printf '%s\n' "$GUARD_RUN_ITEMS" | grep -nF 'check-ci-wiring.test.sh' | head -1)"
   INV_LNO="${INV_LNO%%:*}"
   INV_LINE="$(printf '%s\n' "$GUARD_RUN_ITEMS" | sed -n "${INV_LNO:-1}p")"
   NEUTERED=""
-  case "$INV_LINE" in
-    *'||'*) NEUTERED="a || short-circuit on the invocation itself" ;;
-    *'|'*)  NEUTERED="a pipe — GitLab does not set pipefail, so the job takes the LAST command's exit status, not the battery's" ;;
+  # What the item runs BEFORE reaching the battery, and what it runs AFTER. The
+  # two are not symmetric: `cd scripts; bash …test.sh` still hands the job the
+  # battery's status, `bash …test.sh; true` does not — `;` is `|| true` with one
+  # character changed, and the first form of this check rejected `||` and let `;`
+  # straight through. Redirections are stripped first so an ordinary
+  # `> wiring.log 2>&1` is not read as a background `&`.
+  INV_CMD="$(printf '%s' "$INV_LINE" | sed 's/^[[:space:]]*-[[:space:]]*//')"
+  INV_TAIL="${INV_LINE#*check-ci-wiring.test.sh}"
+  INV_TAIL="${INV_TAIL//&&/  }"
+  INV_TAIL="${INV_TAIL//2>&1/ }"
+  INV_TAIL="${INV_TAIL//>&/ }"
+  INV_TAIL="${INV_TAIL//&>/ }"
+  case "$INV_CMD" in
+    'if '*|'while '*|'until '*|'! '*|'{ '*|'('*)
+      NEUTERED="a shell construct wrapped round the invocation (${INV_CMD%% *}…), whose own status — not the battery's — is what the job takes" ;;
   esac
+  if [ -z "$NEUTERED" ]; then
+    case "$INV_LINE" in
+      *'||'*) NEUTERED="a || short-circuit on the invocation itself" ;;
+      *'|'*)  NEUTERED="a pipe — GitLab does not set pipefail, so the job takes the LAST command's exit status, not the battery's" ;;
+    esac
+  fi
+  if [ -z "$NEUTERED" ]; then
+    case "$INV_TAIL" in
+      *';'*) NEUTERED="a ';' after the invocation — the shell takes the LAST command's exit status, so whatever follows the battery decides the job. This is '|| true' with one character changed" ;;
+      *'&'*) NEUTERED="a '&' after the invocation — the battery is backgrounded and the job never waits for it, let alone takes its exit status" ;;
+    esac
+  fi
   if [ -z "$NEUTERED" ] && [ "${INV_LNO:-1}" -gt 1 ]; then
     PRE="$(printf '%s\n' "$GUARD_RUN_ITEMS" | sed -n "1,$((INV_LNO - 1))p")"
     if printf '%s\n' "$PRE" | grep -E '(^|[[:space:];&|])exit([[:space:]]|$)' >/dev/null; then
@@ -578,7 +833,7 @@ else
   if [ -n "$NEUTERED" ]; then
     fail "$GUARD_JOB names the battery but does not run it unconditionally: ${NEUTERED}. Naming a script is not running it; this is the allow_failure edit written in shell instead of YAML."
   else
-    ok "$GUARD_JOB runs the battery unconditionally (no ||, no pipe, nothing exits or relaxes errexit before it)"
+    ok "$GUARD_JOB runs the battery unconditionally (no ||, pipe, ';', '&' or wrapping construct; nothing exits or relaxes errexit before it, in before_script or script)"
   fi
 
   # 9e. the battery must exist AND be more than a file with the right NAME.
@@ -621,7 +876,13 @@ done
 # as a literal host that review has to eyeball. A hardcoded scheme://host in this
 # line passes every other check in this file.
 if [ -n "$CLONE_LINE" ]; then
+  # `${ORG_BASE}/…` and `$ORG_BASE/…` are the same shell. Reading only the braced
+  # spelling made the unbraced one FAIL with "does not start with a CI-derived
+  # variable … never a literal host" — a supply-chain accusation against an
+  # identical line.
   CLONE_VAR="$(printf '%s\n' "$CLONE_SRC" | sed -n 's/^\${\([A-Za-z_][A-Za-z0-9_]*\)}.*/\1/p')"
+  [ -n "$CLONE_VAR" ] ||
+    CLONE_VAR="$(printf '%s\n' "$CLONE_SRC" | sed -n 's/^\$\([A-Za-z_][A-Za-z0-9_]*\).*/\1/p')"
   if [ -z "$CLONE_SRC" ]; then
     # FIRST, not last: an earlier ordering ran the name test on the empty string
     # and led with "the harness clone source '' is not hugmesh-generator[.git] —
@@ -684,6 +945,38 @@ if [ -n "$CLONE_LINE" ]; then
           fi ;;
       esac
     fi
+  fi
+fi
+
+# -- 12. a top-level `workflow:` must not retire the whole file ----------------
+# Check 9c's own argument is that "a rules: set that never matches retires this
+# guard exactly as when: manual does, without using the word". The same edit ONE
+# LEVEL UP does it to every job at once:
+#     workflow:
+#       rules:
+#         - if: $CI_COMMIT_BRANCH == $CI_DEFAULT_BRANCH
+# CI_COMMIT_BRANCH is unset on a merge_request_event, so no merge-request pipeline
+# is created at all — deleting lint:ci-wiring, pentest:sca and pentest:dast
+# together, from every MR, with no forbidden word anywhere and nothing in the
+# pipeline view to notice. `workflow` is in the reserved-key skip list that checks
+# 8 and 9 use to tell jobs from configuration, which is exactly why nothing looked
+# at it. Same coverage test as 9c, including the `changes:` narrowing.
+WORKFLOW_BLOCK="$(block_of workflow)"
+if [ -z "$WORKFLOW_BLOCK" ]; then
+  ok "no top-level workflow: — each job's own rules: decide when it runs"
+elif ! printf '%s\n' "$WORKFLOW_BLOCK" | grep -E '^[[:space:]]+rules:' >/dev/null; then
+  ok "the top-level workflow: declares no rules: — it cannot suppress a pipeline"
+elif [ -z "$(list_items "$WORKFLOW_BLOCK" rules)" ]; then
+  fail "the top-level workflow: rules: are not in the block form this guard can read (flow style, or an empty list) — an empty workflow rules: creates NO pipeline at all, and a flow-style one cannot be checked for coverage. Write them as a block list, or drop workflow: altogether."
+else
+  read -r WF_MR WF_DEF <<< "$(rules_cover "$WORKFLOW_BLOCK")"
+  WF_MISS=""
+  [ "$WF_MR" -eq 1 ] || WF_MISS="${WF_MISS} merge requests,"
+  [ "$WF_DEF" -eq 1 ] || WF_MISS="${WF_MISS} the default branch,"
+  if [ -n "$WF_MISS" ]; then
+    fail "the top-level workflow: rules: do not cover${WF_MISS%,} — no pipeline is created there at all, so lint:ci-wiring, pentest:sca and pentest:dast are ALL deleted together, and every per-job check in this file goes on printing ok. (\$CI_COMMIT_BRANCH is unset on a merge_request_event, so a lone default-branch rule is exactly this edit.)"
+  else
+    ok "the top-level workflow: rules: still cover merge requests and the default branch"
   fi
 fi
 
