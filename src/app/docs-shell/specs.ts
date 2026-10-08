@@ -1,3 +1,5 @@
+import { resolveAssetsBase } from '../assets-base';
+
 /**
  * The platform OpenAPI specs the navigator can browse. This is the SERVICE
  * PICKER source of truth — each entry is one Spring service that publishes a
@@ -9,6 +11,9 @@
  *              instance (where /v3/api-docs is permitAll), or shipped as a small
  *              committed STUB (info + empty paths) so the build is green and the
  *              picker renders before a real capture lands.
+ *              The URL is ABSOLUTE and anchored on this module's own chunk
+ *              (see ../assets-base.ts): a root-absolute '/assets/...' 404s on
+ *              the host shell's origin when federated (hugmesh-api-docs#10).
  * `fallback` — the LIVE /v3/api-docs reachable through the host/gateway proxy.
  *              Works in dev/test (permitAll); in prod it requires ROLE_ADMIN,
  *              carried by the session cookie that the HttpClient credentials
@@ -30,32 +35,32 @@ export interface SpecConfig {
 export const SPECS = {
   admin: {
     label: 'Admin BFF',
-    primary: '/assets/specs/openapi-admin.json',
+    primary: resolveAssetsBase('assets/specs/openapi-admin.json'),
     fallback: '/bff/admin/v3/api-docs',
   },
   mod: {
     label: 'Mod BFF',
-    primary: '/assets/specs/openapi-mod.json',
+    primary: resolveAssetsBase('assets/specs/openapi-mod.json'),
     fallback: '/bff/mod/v3/api-docs',
   },
   user: {
     label: 'User BFF',
-    primary: '/assets/specs/openapi-user.json',
+    primary: resolveAssetsBase('assets/specs/openapi-user.json'),
     fallback: '/bff/user/v3/api-docs',
   },
   federation: {
     label: 'Federation API',
-    primary: '/assets/specs/openapi-federation.json',
+    primary: resolveAssetsBase('assets/specs/openapi-federation.json'),
     fallback: '/api/federation/v3/api-docs',
   },
   actions: {
     label: 'HugMesh Actions',
-    primary: '/assets/specs/openapi-actions.json',
+    primary: resolveAssetsBase('assets/specs/openapi-actions.json'),
     fallback: '/actions/v3/api-docs',
   },
   wiki: {
     label: 'Wiki BFF',
-    primary: '/assets/specs/openapi-wiki.json',
+    primary: resolveAssetsBase('assets/specs/openapi-wiki.json'),
     fallback: '/bff/wiki/v3/api-docs',
   },
 } as const satisfies Record<string, SpecConfig>;
