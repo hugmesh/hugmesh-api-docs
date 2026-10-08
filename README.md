@@ -5,16 +5,18 @@ Angular native-federation remote built on a custom OpenAPI navigator (not a gene
 
 ## Highlights
 
-- **Service picker.** Choose which backend service's OpenAPI spec to browse from a single shell.
+- **Service picker.** Choose which backend service's OpenAPI spec to browse from a single shell:
+  Admin BFF, Mod BFF, User BFF, Federation API, HugMesh Actions, Wiki BFF.
 - **Two views per spec.** A read-only **Reference** tab (endpoints, parameters, request/response
   samples) and an interactive **Try it out** tab (live request form, JSON/multipart body editor,
   and a terminal-styled viewer for streaming/SSE endpoints).
 - **Resilient spec loading.** Each service's spec is loaded committed-artifact-first, falling back
   to a live fetch from the running service, with an honest "not yet published" state if neither is
-  available — never a silently empty page.
+  available — never a silently empty page. A committed spec with no operations counts as missing.
+  All six committed specs (`src/assets/specs/`) are stubs today, so the live fetch does the work.
 - **Spec extensions.** Services can annotate their OpenAPI documents with a small set of
-  `x-hugmesh` extension keys (sample requests/responses, streaming hints, upload field names) to
-  improve how the navigator renders them.
+  `x-hugmesh` extension keys (`sampleRequest`, `sampleResponse`, `sampleEvent`, `sse`,
+  `binaryUpload`, `blurb`, `longDescription`) to improve how the navigator renders them.
 - **Session-based auth.** Live requests ride the platform's httpOnly `bff_` session cookie — the
   gateway exchanges it for the upstream bearer server-side, so the browser never holds a token. A
   manual bearer override is available for probing another environment.
@@ -35,14 +37,23 @@ npm run build    # -> dist/api-docs/browser
 ### Generating a typed client (optional)
 
 ```sh
-npm run gen      # ng-openapi-gen, reads a committed openapi.json
+npm run gen      # ng-openapi-gen: reads openapi.json at the repo root, writes src/app/api
 ```
+
+`openapi.json` and `src/app/api` are git-ignored, so neither is in a fresh clone. `npm run build`
+runs `gen` first only when a non-empty `openapi.json` exists.
+
+To replace a stub spec with a real one, run a dev-profile instance of the service and capture it:
+`npm run gen:fetch:<service>`, where `<service>` is `admin`, `mod`, `user`, `federation`,
+`actions` or `wiki`.
 
 ## Deploy
 
 The Dockerfile builds a `node:24-alpine` build stage and serves the compiled bundle via
 `nginx:1.27-alpine`, with CORS enabled so a host shell can fetch `remoteEntry.json` cross-origin,
-and a `/healthz` endpoint for readiness probes.
+and a `/healthz` endpoint for readiness probes. The build passes `--base-href=/api-docs/`: the
+gateway routes `/api-docs/**` to this image, and without the flag the bundle requests its chunks
+from `/`. The host shell mounts the remote at `/admin/docs`.
 
 ## Security scanning
 
@@ -78,7 +89,7 @@ npm run test:ci-wiring    # ...and prove the guard detects each way of breaking 
 
 Worth reading before treating a green `pentest:dast` as a statement about your merge request.
 The shared harness stands up the generator's env-test-build (`make stack-up`) and points ZAP at the
-two-brand gateway front door. That front door **does** reach this service — the stack builds a
+gateway front door (`https://branda.localtest.me:8443` unless `DAST_TARGET` overrides it). That front door **does** reach this service — the stack builds a
 `hugmesh-api-docs` container and the gateway routes `Path=/api-docs/**` to it — which is why
 `DAST_TARGET` (the harness's per-repo target override) is deliberately left unset here.
 
