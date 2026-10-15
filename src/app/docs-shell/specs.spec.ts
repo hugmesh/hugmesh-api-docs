@@ -1,5 +1,9 @@
 import { assetsAnchor, assetsBaseFrom } from '../assets-base';
 import { SPECS, SPEC_IDS } from './specs';
+import adminSpec from '../../assets/specs/openapi-admin.json';
+import modSpec from '../../assets/specs/openapi-mod.json';
+import userSpec from '../../assets/specs/openapi-user.json';
+import wikiSpec from '../../assets/specs/openapi-wiki.json';
 
 /** Any absolute URL (has a scheme). Karma rewrites `import.meta.url` to a
  *  `file://` source URL; the shipped bundle keeps the real chunk URL. */
@@ -39,6 +43,41 @@ describe('SPECS primary artifact URLs (federated mount, #10)', () => {
       expect(primary).toMatch(ABSOLUTE_URL);
       expect(primary.startsWith('/')).toBeFalse();
       expect(primary.endsWith(`/assets/specs/openapi-${id}.json`)).toBeTrue();
+    }
+  });
+});
+
+/**
+ * The committed spec is what the navigator loads first, with no running
+ * service. The loader treats an `x-stub` marker or an empty `paths` as "no
+ * contract" and goes live, so a committed spec that regresses to a stub would
+ * silently put that service back on the live fetch. These four are copies of
+ * the specs the backends commit; federation and actions have no committed
+ * backend spec yet and stay stubs until a live capture.
+ */
+describe('committed backend specs carry operations', () => {
+  const HTTP_METHODS = ['get', 'post', 'put', 'delete', 'patch'];
+  const COMMITTED: Record<string, any> = {
+    admin: adminSpec,
+    mod: modSpec,
+    user: userSpec,
+    wiki: wikiSpec,
+  };
+
+  for (const [id, spec] of Object.entries(COMMITTED)) {
+    it(`${id} is not a stub and has at least one operation`, () => {
+      expect(spec['x-stub']).toBeUndefined();
+      const paths: Record<string, Record<string, unknown>> = spec.paths ?? {};
+      const operations = Object.values(paths).flatMap((item) =>
+        Object.keys(item).filter((m) => HTTP_METHODS.includes(m)),
+      );
+      expect(operations.length).toBeGreaterThan(0);
+    });
+  }
+
+  it('covers only ids the service picker offers', () => {
+    for (const id of Object.keys(COMMITTED)) {
+      expect(SPEC_IDS).toContain(id as (typeof SPEC_IDS)[number]);
     }
   });
 });

@@ -1,11 +1,3588 @@
 {
-  "x-stub": "STUB spec — replace by running `npm run gen:fetch:user` against a dev-profile hugmesh-user-bff-api. The live fallback (SPECS.user.fallback) renders the real contract at runtime.",
-  "openapi": "3.0.1",
-  "info": {
-    "title": "hugmesh-user-bff-api",
-    "version": "0.1.0",
-    "description": "User BFF — stub OpenAPI spec. Real spec captured at build time via gen:fetch:user, or loaded live from /v3/api-docs (ROLE_ADMIN in prod)."
+  "openapi" : "3.0.1",
+  "info" : {
+    "title" : "hugmesh-user-bff-api",
+    "description" : "User BFF API (/bff/user/**) — every endpoint is owner-scoped to the caller's Casdoor JWT subject. Surfaces: native login/register/session, own-profile CRUD + avatar upload, Casdoor password/email relays, the durable per-user preference store (media.poison.default + mastodon.appearance.*), per-category notification preferences, the in-app notification inbox + SSE stream, home-guide dismissal, self-blocks + instance-block recommendation, self-silence, login-session list/revoke, connected apps & devices, federation cards, the media AI-cloak proxy, Meshtastic mesh-device claims, VN character parts + expression stickers, account status, and the Matrix/Mastodon reverse proxies.",
+    "version" : "0.2.0"
   },
-  "tags": [],
-  "paths": {}
+  "servers" : [ {
+    "url" : ""
+  } ],
+  "tags" : [ {
+    "name" : "Character-parts",
+    "description" : "The caller's OWN user-drawn character parts (owner = JWT subject). SVG is server-sanitized before storage and reviewed by a moderator."
+  }, {
+    "name" : "Password reset",
+    "description" : "Anonymous forgot-password: request a mailed code, then redeem it. Ships dark behind casdoor.password-reset.enabled."
+  }, {
+    "name" : "Notifications (TEST-SEED, self only)",
+    "description" : "TEST/SEED-ONLY. Ships dark behind app.test-seed.enabled (default false). Creates a real in-app notification for the CALLER ONLY via the same delivery service the production ROLE_SERVICE internal-deliver path uses — never a parallel write."
+  }, {
+    "name" : "Matrix proxy (D6)",
+    "description" : "Owner-scoped Matrix reverse-proxy; injects the server-held homeserver-native token. Live by default behind app.hs-token.enabled."
+  }, {
+    "name" : "Self-silence",
+    "description" : "Self-service visibility hide (owner = JWT subject). NOT a ban: no role/suspension/revocation."
+  }, {
+    "name" : "Account status",
+    "description" : "Polling endpoint for the caller's own account status (roles, domain, silence)."
+  }, {
+    "name" : "Mastodon proxy (D6)",
+    "description" : "Owner-scoped Mastodon reverse-proxy; injects the server-held homeserver-native token. Live by default behind app.hs-token.enabled."
+  }, {
+    "name" : "Mesh-devices (internal bridge + moderation)",
+    "description" : "SERVICE-PRINCIPAL ONLY: the full node-id → Matrix-localpart mapping (active rows only) + the batch LoRa status write-back for the mesh↔Matrix bridge, plus the cross-owner moderation console list and the revoke/restore state writes mod-bff drives."
+  }, {
+    "name" : "Connected clients",
+    "description" : "The caller's OWN connected apps + device sessions (owner = JWT subject). Requires an external-client role."
+  }, {
+    "name" : "Home guide",
+    "description" : "Per-user home/getting-started guide dismissal (owner = JWT subject)."
+  }, {
+    "name" : "Media-cloak",
+    "description" : "Poison-before-ingest media proxy (owner = JWT subject). Best-effort AI-cloak — 'AI-cloak applied', never 'protected' unless the round-trip survival gate passes."
+  }, {
+    "name" : "Character-stickers",
+    "description" : "The caller's OWN VN-character expression stickers (owner = JWT subject). Each is a rendered PNG, edge-AI moderated before publish and reviewed by a moderator."
+  }, {
+    "name" : "SSO auth",
+    "description" : "Native login (server-side credential check) / register / session. Ships dark behind app.bff.oidc.enabled."
+  }, {
+    "name" : "Cards",
+    "description" : "The caller's OWN federation bundles (owner = JWT subject), via hugmesh-federation-api."
+  }, {
+    "name" : "Profile",
+    "description" : "The caller's OWN profile (owner = JWT subject). Password/email go to the Casdoor IdP."
+  }, {
+    "name" : "User preferences",
+    "description" : "Durable per-user UI preferences (owner = JWT subject, domain-scoped). Carries media.poison.default (the per-user AI-cloak default; value vocabulary = the MediaPoisonMode schema, off|low|medium|high, BFF-owned) and the mastodon.appearance.* keys (the mastodon-ui appearance panel)."
+  }, {
+    "name" : "Self-block",
+    "description" : "The caller's OWN blocks (owner = JWT subject) + instance-block recommendation."
+  }, {
+    "name" : "Mesh-devices",
+    "description" : "The caller's OWN claimed Meshtastic LoRa radio node ids (owner = JWT subject). Node ids are globally unique — one owner per radio."
+  }, {
+    "name" : "Legacy path parity",
+    "description" : "admin-bff AuthController parity for the cluster-routed legacy user paths (/bff/me/namespaces, /bff/provision/matrix, /bff/provision/mastodon, /bff/register/google, /bff/register/discord). Decision 25 on hugmesh-generator#347: parity first, then retire."
+  }, {
+    "name" : "Notification preferences",
+    "description" : "Per-category notification preferences (owner = JWT subject, domain-scoped). account-restriction is forced-on / un-silenceable."
+  }, {
+    "name" : "Character-moderation (internal receiver)",
+    "description" : "SERVICE-PRINCIPAL ONLY part/sticker status flip (PENDING→ACTIVE/REJECTED) when a moderator resolves the finding. PENDING-guarded + idempotent (a no-op/unknown id is a 404)."
+  }, {
+    "name" : "Character-avatar",
+    "description" : "The profile picture as a VN forum sprite: the caller's own stable serve handle, and the raster bytes behind a handle (readable by other users in the same brand so a sprite renders in their posts)."
+  }, {
+    "name" : "Notifications (in-app floor)",
+    "description" : "The caller's OWN in-app notifications (owner = JWT subject, domain-scoped). The always-on in-app channel — read + mark-read only; the actions reconciler writes them."
+  }, {
+    "name" : "Sessions",
+    "description" : "The caller's OWN active login sessions (owner = JWT-derived account). List + revoke."
+  }, {
+    "name" : "Notifications (internal deliver)",
+    "description" : "SERVICE-PRINCIPAL ONLY in-app notification delivery (target taken from the body). Honours prefs (account-restriction forced-on) and is idempotent on the source event."
+  } ],
+  "paths" : {
+    "/bff/user/profile" : {
+      "get" : {
+        "tags" : [ "Profile" ],
+        "summary" : "Get my profile (owner = JWT subject).",
+        "operationId" : "me",
+        "responses" : {
+          "200" : {
+            "description" : "OK",
+            "content" : {
+              "*/*" : {
+                "schema" : {
+                  "$ref" : "#/components/schemas/UserProfile"
+                }
+              }
+            }
+          }
+        }
+      },
+      "put" : {
+        "tags" : [ "Profile" ],
+        "summary" : "Create/update my profile. The body's userId is ignored — the owner is the JWT subject; the vanity username is derived from the token.",
+        "operationId" : "upsert",
+        "requestBody" : {
+          "content" : {
+            "application/json" : {
+              "schema" : {
+                "$ref" : "#/components/schemas/UserProfile"
+              }
+            }
+          },
+          "required" : true
+        },
+        "responses" : {
+          "200" : {
+            "description" : "OK",
+            "content" : {
+              "*/*" : {
+                "schema" : {
+                  "$ref" : "#/components/schemas/UserProfile"
+                }
+              }
+            }
+          }
+        }
+      },
+      "delete" : {
+        "tags" : [ "Profile" ],
+        "summary" : "Delete my profile.",
+        "operationId" : "delete",
+        "responses" : {
+          "200" : {
+            "description" : "OK"
+          }
+        }
+      }
+    },
+    "/bff/user/preferences" : {
+      "get" : {
+        "tags" : [ "User preferences" ],
+        "summary" : "My durable preferences (server defaults merged in for unset keys).",
+        "operationId" : "get",
+        "responses" : {
+          "200" : {
+            "description" : "OK",
+            "content" : {
+              "*/*" : {
+                "schema" : {
+                  "type" : "object",
+                  "additionalProperties" : {
+                    "type" : "string"
+                  }
+                }
+              }
+            }
+          }
+        }
+      },
+      "put" : {
+        "tags" : [ "User preferences" ],
+        "summary" : "Upsert one of my durable preferences (returns the resolved view).",
+        "operationId" : "put",
+        "requestBody" : {
+          "content" : {
+            "application/json" : {
+              "schema" : {
+                "$ref" : "#/components/schemas/UserPreferenceUpsert"
+              }
+            }
+          },
+          "required" : true
+        },
+        "responses" : {
+          "200" : {
+            "description" : "OK",
+            "content" : {
+              "*/*" : {
+                "schema" : {
+                  "type" : "object",
+                  "additionalProperties" : {
+                    "type" : "string"
+                  }
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/bff/user/notification-preferences" : {
+      "get" : {
+        "tags" : [ "Notification preferences" ],
+        "summary" : "My notification preferences (defaults merged in; account-restriction always enabled).",
+        "operationId" : "get_1",
+        "responses" : {
+          "200" : {
+            "description" : "OK",
+            "content" : {
+              "*/*" : {
+                "schema" : {
+                  "type" : "object",
+                  "additionalProperties" : {
+                    "type" : "boolean"
+                  }
+                }
+              }
+            }
+          }
+        }
+      },
+      "put" : {
+        "tags" : [ "Notification preferences" ],
+        "summary" : "Upsert one notification-category preference (returns the resolved view). account-restriction enabled=false is coerced to true.",
+        "operationId" : "put_1",
+        "requestBody" : {
+          "content" : {
+            "application/json" : {
+              "schema" : {
+                "$ref" : "#/components/schemas/NotificationPreferenceUpsert"
+              }
+            }
+          },
+          "required" : true
+        },
+        "responses" : {
+          "200" : {
+            "description" : "OK",
+            "content" : {
+              "*/*" : {
+                "schema" : {
+                  "type" : "object",
+                  "additionalProperties" : {
+                    "type" : "boolean"
+                  }
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/bff/user/mesh-devices/{id}/visibility" : {
+      "put" : {
+        "tags" : [ "Mesh-devices" ],
+        "summary" : "Change who may see MY device's LoRa status (private|friends|channels). Frozen on a revoked device (409); a device that is not mine is a 404.",
+        "operationId" : "setVisibility",
+        "parameters" : [ {
+          "name" : "id",
+          "in" : "path",
+          "required" : true,
+          "schema" : {
+            "type" : "string"
+          }
+        } ],
+        "requestBody" : {
+          "content" : {
+            "application/json" : {
+              "schema" : {
+                "$ref" : "#/components/schemas/VisibilityRequest"
+              }
+            }
+          },
+          "required" : true
+        },
+        "responses" : {
+          "200" : {
+            "description" : "Visibility updated; the device is returned.",
+            "content" : {
+              "*/*" : {
+                "schema" : {
+                  "$ref" : "#/components/schemas/MeshDevice"
+                }
+              }
+            }
+          },
+          "400" : {
+            "description" : "visibility not in private|friends|channels.",
+            "content" : {
+              "*/*" : {
+                "schema" : {
+                  "$ref" : "#/components/schemas/MeshDevice"
+                }
+              }
+            }
+          },
+          "401" : {
+            "description" : "Missing or invalid Casdoor JWT.",
+            "content" : {
+              "*/*" : {
+                "schema" : {
+                  "$ref" : "#/components/schemas/MeshDevice"
+                }
+              }
+            }
+          },
+          "403" : {
+            "description" : "Principal lacks ROLE_USER.",
+            "content" : {
+              "*/*" : {
+                "schema" : {
+                  "$ref" : "#/components/schemas/MeshDevice"
+                }
+              }
+            }
+          },
+          "404" : {
+            "description" : "No such mesh device for this user (foreign/unknown id — no existence leak).",
+            "content" : {
+              "*/*" : {
+                "schema" : {
+                  "$ref" : "#/components/schemas/MeshDevice"
+                }
+              }
+            }
+          },
+          "409" : {
+            "description" : "Device is revoked — visibility cannot be changed.",
+            "content" : {
+              "*/*" : {
+                "schema" : {
+                  "$ref" : "#/components/schemas/MeshDevice"
+                }
+              }
+            }
+          },
+          "500" : {
+            "description" : "Database error.",
+            "content" : {
+              "*/*" : {
+                "schema" : {
+                  "$ref" : "#/components/schemas/MeshDevice"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/bff/user/home-guide/dismiss" : {
+      "put" : {
+        "tags" : [ "Home guide" ],
+        "summary" : "Dismiss the named guide for me (PUT alias of /dismiss).",
+        "operationId" : "dismissPut",
+        "parameters" : [ {
+          "name" : "guide",
+          "in" : "query",
+          "required" : false,
+          "schema" : {
+            "pattern" : "^[A-Za-z0-9][A-Za-z0-9-]{0,63}$",
+            "type" : "string"
+          }
+        } ],
+        "responses" : {
+          "200" : {
+            "description" : "OK",
+            "content" : {
+              "*/*" : {
+                "schema" : {
+                  "type" : "object",
+                  "additionalProperties" : {
+                    "type" : "object"
+                  }
+                }
+              }
+            }
+          }
+        }
+      },
+      "post" : {
+        "tags" : [ "Home guide" ],
+        "summary" : "Dismiss the named guide for me (idempotent).",
+        "operationId" : "dismiss",
+        "parameters" : [ {
+          "name" : "guide",
+          "in" : "query",
+          "required" : false,
+          "schema" : {
+            "pattern" : "^[A-Za-z0-9][A-Za-z0-9-]{0,63}$",
+            "type" : "string"
+          }
+        } ],
+        "responses" : {
+          "200" : {
+            "description" : "OK",
+            "content" : {
+              "*/*" : {
+                "schema" : {
+                  "type" : "object",
+                  "additionalProperties" : {
+                    "type" : "object"
+                  }
+                }
+              }
+            }
+          }
+        }
+      },
+      "delete" : {
+        "tags" : [ "Home guide" ],
+        "summary" : "Re-show (un-dismiss) the named guide for me.",
+        "operationId" : "reset",
+        "parameters" : [ {
+          "name" : "guide",
+          "in" : "query",
+          "required" : false,
+          "schema" : {
+            "type" : "string"
+          }
+        } ],
+        "responses" : {
+          "200" : {
+            "description" : "OK",
+            "content" : {
+              "*/*" : {
+                "schema" : {
+                  "type" : "object",
+                  "additionalProperties" : {
+                    "type" : "object"
+                  }
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/bff/user/cards/{slug}" : {
+      "get" : {
+        "tags" : [ "Cards" ],
+        "summary" : "List versions of one of my cards by slug.",
+        "operationId" : "bySlug",
+        "parameters" : [ {
+          "name" : "slug",
+          "in" : "path",
+          "required" : true,
+          "schema" : {
+            "pattern" : "^[a-z0-9](?:[a-z0-9-]{0,126}[a-z0-9])?$",
+            "type" : "string"
+          }
+        } ],
+        "responses" : {
+          "200" : {
+            "description" : "OK",
+            "content" : {
+              "*/*" : {
+                "schema" : {
+                  "type" : "array",
+                  "items" : {
+                    "$ref" : "#/components/schemas/UserModuleCard"
+                  }
+                }
+              }
+            }
+          }
+        }
+      },
+      "put" : {
+        "tags" : [ "Cards" ],
+        "summary" : "Publish (create/update) a card bundle for a slug.",
+        "description" : "Body is the single entry file (octet-stream). federation-api content-hashes it, records a user_modules row under ME (forwarded JWT), and supersedes the prior version.",
+        "operationId" : "put_2",
+        "parameters" : [ {
+          "name" : "slug",
+          "in" : "path",
+          "required" : true,
+          "schema" : {
+            "pattern" : "^[a-z0-9](?:[a-z0-9-]{0,126}[a-z0-9])?$",
+            "type" : "string"
+          }
+        }, {
+          "name" : "entryFile",
+          "in" : "query",
+          "required" : false,
+          "schema" : {
+            "maxLength" : 512,
+            "minLength" : 0,
+            "type" : "string"
+          }
+        }, {
+          "name" : "visibility",
+          "in" : "query",
+          "required" : false,
+          "schema" : {
+            "pattern" : "^(public|internal)$",
+            "type" : "string"
+          }
+        }, {
+          "name" : "manifest",
+          "in" : "query",
+          "required" : false,
+          "schema" : {
+            "type" : "string"
+          }
+        } ],
+        "requestBody" : {
+          "content" : {
+            "application/octet-stream" : {
+              "schema" : {
+                "type" : "string",
+                "format" : "byte"
+              }
+            }
+          }
+        },
+        "responses" : {
+          "200" : {
+            "description" : "OK",
+            "content" : {
+              "*/*" : {
+                "schema" : {
+                  "$ref" : "#/components/schemas/UserModuleCard"
+                }
+              }
+            }
+          }
+        }
+      },
+      "delete" : {
+        "tags" : [ "Cards" ],
+        "summary" : "Delete one of my cards by slug.",
+        "description" : "Proxies federation-api's owner-scoped DELETE: removes the caller's OWN current bundle for the slug (federation-api removes the storage version + supersedes the row). Owner-enforced upstream via the forwarded JWT (a non-owner gets 404 from federation-api).",
+        "operationId" : "delete_1",
+        "parameters" : [ {
+          "name" : "slug",
+          "in" : "path",
+          "required" : true,
+          "schema" : {
+            "pattern" : "^[a-z0-9](?:[a-z0-9-]{0,126}[a-z0-9])?$",
+            "type" : "string"
+          }
+        } ],
+        "responses" : {
+          "204" : {
+            "description" : "No Content"
+          }
+        }
+      }
+    },
+    "/bff/user/self-silence/email-mod" : {
+      "post" : {
+        "tags" : [ "Self-silence" ],
+        "summary" : "Email a mod/admin to reactivate me sooner (writes a self-silence-appeal request; NOT SMTP).",
+        "operationId" : "emailMod",
+        "requestBody" : {
+          "content" : {
+            "application/json" : {
+              "schema" : {
+                "$ref" : "#/components/schemas/EmailModRequest"
+              }
+            }
+          },
+          "required" : true
+        },
+        "responses" : {
+          "200" : {
+            "description" : "OK",
+            "content" : {
+              "*/*" : {
+                "schema" : {
+                  "type" : "object",
+                  "additionalProperties" : {
+                    "type" : "object"
+                  }
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/bff/user/self-silence/cancel" : {
+      "post" : {
+        "tags" : [ "Self-silence" ],
+        "summary" : "Cancel my self-silence now (un-hide + clear).",
+        "operationId" : "cancel",
+        "responses" : {
+          "200" : {
+            "description" : "OK"
+          }
+        }
+      }
+    },
+    "/bff/user/self-silence/activate" : {
+      "post" : {
+        "tags" : [ "Self-silence" ],
+        "summary" : "Activate my self-silence (hide me from others until expiresAt). I keep my own access.",
+        "operationId" : "activate",
+        "requestBody" : {
+          "content" : {
+            "application/json" : {
+              "schema" : {
+                "$ref" : "#/components/schemas/ActivateRequest"
+              }
+            }
+          },
+          "required" : true
+        },
+        "responses" : {
+          "200" : {
+            "description" : "OK",
+            "content" : {
+              "*/*" : {
+                "schema" : {
+                  "$ref" : "#/components/schemas/SelfSilence"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/bff/user/recommend-instance-block" : {
+      "post" : {
+        "tags" : [ "Self-block" ],
+        "summary" : "Recommend an instance block (starts the USER->MOD->ADMIN chain via federation-api). Requires a platform role.",
+        "operationId" : "recommendInstanceBlock",
+        "requestBody" : {
+          "content" : {
+            "application/json" : {
+              "schema" : {
+                "$ref" : "#/components/schemas/RecommendRequest"
+              }
+            }
+          },
+          "required" : true
+        },
+        "responses" : {
+          "200" : {
+            "description" : "Instance-block recommendation submitted to federation-api. Starts the USER->MOD->ADMIN chain.",
+            "content" : {
+              "*/*" : {
+                "schema" : {
+                  "type" : "object",
+                  "additionalProperties" : {
+                    "type" : "object"
+                  }
+                }
+              }
+            }
+          },
+          "400" : {
+            "description" : "Missing instance.",
+            "content" : {
+              "*/*" : {
+                "schema" : {
+                  "type" : "object",
+                  "additionalProperties" : {
+                    "type" : "object"
+                  }
+                }
+              }
+            }
+          },
+          "401" : {
+            "description" : "Missing or invalid Casdoor JWT.",
+            "content" : {
+              "*/*" : {
+                "schema" : {
+                  "type" : "object",
+                  "additionalProperties" : {
+                    "type" : "object"
+                  }
+                }
+              }
+            }
+          },
+          "403" : {
+            "description" : "Caller lacks ROLE_MATRIX or ROLE_MASTODON (API leg + service leg re-check).",
+            "content" : {
+              "*/*" : {
+                "schema" : {
+                  "type" : "object",
+                  "additionalProperties" : {
+                    "type" : "object"
+                  }
+                }
+              }
+            }
+          },
+          "502" : {
+            "description" : "federation-api unreachable or returned an error.",
+            "content" : {
+              "*/*" : {
+                "schema" : {
+                  "type" : "object",
+                  "additionalProperties" : {
+                    "type" : "object"
+                  }
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/bff/user/profile/password" : {
+      "post" : {
+        "tags" : [ "Profile" ],
+        "summary" : "Change my Casdoor password (goes to the IdP, not the profile table).",
+        "operationId" : "changePassword",
+        "requestBody" : {
+          "content" : {
+            "application/json" : {
+              "schema" : {
+                "$ref" : "#/components/schemas/PasswordChangeRequest"
+              }
+            }
+          },
+          "required" : true
+        },
+        "responses" : {
+          "200" : {
+            "description" : "OK",
+            "content" : {
+              "*/*" : {
+                "schema" : {
+                  "type" : "object",
+                  "additionalProperties" : {
+                    "type" : "object"
+                  }
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/bff/user/profile/email" : {
+      "post" : {
+        "tags" : [ "Profile" ],
+        "summary" : "Change my Casdoor email (goes to the IdP, not the profile table).",
+        "operationId" : "changeEmail",
+        "requestBody" : {
+          "content" : {
+            "application/json" : {
+              "schema" : {
+                "$ref" : "#/components/schemas/EmailChangeRequest"
+              }
+            }
+          },
+          "required" : true
+        },
+        "responses" : {
+          "200" : {
+            "description" : "OK",
+            "content" : {
+              "*/*" : {
+                "schema" : {
+                  "type" : "object",
+                  "additionalProperties" : {
+                    "type" : "object"
+                  }
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/bff/user/profile/avatar" : {
+      "post" : {
+        "tags" : [ "Profile" ],
+        "summary" : "Upload my profile picture (multipart 'file'). The bytes are stored on the Matrix homeserver media repo (stub-gated) and the mxc:// URL is saved on my profile; the refreshed profile is returned. Owner = JWT subject.",
+        "operationId" : "uploadAvatar",
+        "requestBody" : {
+          "content" : {
+            "multipart/form-data" : {
+              "schema" : {
+                "required" : [ "file" ],
+                "type" : "object",
+                "properties" : {
+                  "file" : {
+                    "type" : "string",
+                    "format" : "binary"
+                  }
+                }
+              }
+            }
+          }
+        },
+        "responses" : {
+          "200" : {
+            "description" : "OK",
+            "content" : {
+              "*/*" : {
+                "schema" : {
+                  "$ref" : "#/components/schemas/UserProfile"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/bff/user/notifications/{id}/read" : {
+      "post" : {
+        "tags" : [ "Notifications (in-app floor)" ],
+        "summary" : "Mark one of MY notifications read (404 if not my own row).",
+        "operationId" : "markRead",
+        "parameters" : [ {
+          "name" : "id",
+          "in" : "path",
+          "required" : true,
+          "schema" : {
+            "pattern" : "^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$",
+            "type" : "string"
+          }
+        } ],
+        "responses" : {
+          "204" : {
+            "description" : "No Content"
+          }
+        }
+      }
+    },
+    "/bff/user/notifications/test-seed" : {
+      "post" : {
+        "tags" : [ "Notifications (TEST-SEED, self only)" ],
+        "summary" : "TEST/SEED-ONLY: create a real in-app notification for the CALLING user (self only), through the production delivery service. 503 when app.test-seed.enabled=false (ships dark).",
+        "operationId" : "seed",
+        "requestBody" : {
+          "content" : {
+            "application/json" : {
+              "schema" : {
+                "$ref" : "#/components/schemas/SeedRequest"
+              }
+            }
+          },
+          "required" : true
+        },
+        "responses" : {
+          "200" : {
+            "description" : "OK",
+            "content" : {
+              "*/*" : {
+                "schema" : {
+                  "$ref" : "#/components/schemas/SeedResult"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/bff/user/mesh-devices" : {
+      "get" : {
+        "tags" : [ "Mesh-devices" ],
+        "summary" : "List my claimed mesh devices (newest first; revoked rows included with state + reason; bridge-reported LoRa status fields included).",
+        "operationId" : "mine",
+        "responses" : {
+          "200" : {
+            "description" : "The caller's own mesh devices (may be empty).",
+            "content" : {
+              "*/*" : {
+                "schema" : {
+                  "type" : "array",
+                  "items" : {
+                    "$ref" : "#/components/schemas/MeshDevice"
+                  }
+                }
+              }
+            }
+          },
+          "401" : {
+            "description" : "Missing or invalid Casdoor JWT.",
+            "content" : {
+              "*/*" : {
+                "schema" : {
+                  "type" : "array",
+                  "items" : {
+                    "$ref" : "#/components/schemas/MeshDevice"
+                  }
+                }
+              }
+            }
+          },
+          "403" : {
+            "description" : "Principal lacks ROLE_USER.",
+            "content" : {
+              "*/*" : {
+                "schema" : {
+                  "type" : "array",
+                  "items" : {
+                    "$ref" : "#/components/schemas/MeshDevice"
+                  }
+                }
+              }
+            }
+          }
+        }
+      },
+      "post" : {
+        "tags" : [ "Mesh-devices" ],
+        "summary" : "Claim a Meshtastic LoRa node id (owner = JWT subject). Accepts 'a1b2c3d4' / '!A1B2C3D4'; stores the canonical '!'+lowercase form. A node id already registered by anyone is a 409.",
+        "operationId" : "claim",
+        "requestBody" : {
+          "content" : {
+            "application/json" : {
+              "schema" : {
+                "$ref" : "#/components/schemas/ClaimRequest"
+              }
+            }
+          },
+          "required" : true
+        },
+        "responses" : {
+          "200" : {
+            "description" : "Node id claimed; the persisted device is returned (canonical nodeId, visibility 'private', state 'active').",
+            "content" : {
+              "*/*" : {
+                "schema" : {
+                  "$ref" : "#/components/schemas/MeshDevice"
+                }
+              }
+            }
+          },
+          "400" : {
+            "description" : "Missing/malformed nodeId (not 8 hex digits with an optional '!' prefix) or label over 64 chars.",
+            "content" : {
+              "*/*" : {
+                "schema" : {
+                  "$ref" : "#/components/schemas/MeshDevice"
+                }
+              }
+            }
+          },
+          "401" : {
+            "description" : "Missing or invalid Casdoor JWT.",
+            "content" : {
+              "*/*" : {
+                "schema" : {
+                  "$ref" : "#/components/schemas/MeshDevice"
+                }
+              }
+            }
+          },
+          "403" : {
+            "description" : "Principal lacks ROLE_USER, OR the caller's domain has not been granted+enabled the 'user-mesh-devices' capability (the per-domain claim gate — dark by default, see MeshClaimCapabilityGate).",
+            "content" : {
+              "*/*" : {
+                "schema" : {
+                  "$ref" : "#/components/schemas/MeshDevice"
+                }
+              }
+            }
+          },
+          "409" : {
+            "description" : "Node id already registered on this platform (by anyone, any domain, active or revoked — one owner per radio).",
+            "content" : {
+              "*/*" : {
+                "schema" : {
+                  "$ref" : "#/components/schemas/MeshDevice"
+                }
+              }
+            }
+          },
+          "500" : {
+            "description" : "Database error writing the claim row.",
+            "content" : {
+              "*/*" : {
+                "schema" : {
+                  "$ref" : "#/components/schemas/MeshDevice"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/bff/user/media/upload" : {
+      "post" : {
+        "tags" : [ "Media-cloak" ],
+        "summary" : "Upload media through the cloak proxy (poison-then-forward).",
+        "description" : "Multipart: file (required) + platform (matrix|mastodon) + mode (glaze|nightshade|light|none, default from server) + roomId/description (passthrough). Returns the homeserver response verbatim + the server-owned cloak decision.",
+        "operationId" : "upload",
+        "requestBody" : {
+          "content" : {
+            "multipart/form-data" : {
+              "schema" : {
+                "required" : [ "file", "platform" ],
+                "type" : "object",
+                "properties" : {
+                  "file" : {
+                    "type" : "string",
+                    "format" : "binary"
+                  },
+                  "platform" : {
+                    "type" : "string"
+                  },
+                  "mode" : {
+                    "type" : "string"
+                  },
+                  "roomId" : {
+                    "type" : "string"
+                  },
+                  "description" : {
+                    "type" : "string"
+                  }
+                }
+              }
+            }
+          }
+        },
+        "responses" : {
+          "200" : {
+            "description" : "OK",
+            "content" : {
+              "*/*" : {
+                "schema" : {
+                  "type" : "object",
+                  "additionalProperties" : {
+                    "type" : "object"
+                  }
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/bff/user/internal/notifications" : {
+      "post" : {
+        "tags" : [ "Notifications (internal deliver)" ],
+        "summary" : "Deliver one in-app notification to the target user (SERVICE-principal only; prefs honoured, account-restriction forced-on, idempotent on the source event).",
+        "operationId" : "deliver",
+        "requestBody" : {
+          "content" : {
+            "application/json" : {
+              "schema" : {
+                "$ref" : "#/components/schemas/DeliverRequest"
+              }
+            }
+          },
+          "required" : true
+        },
+        "responses" : {
+          "200" : {
+            "description" : "OK",
+            "content" : {
+              "*/*" : {
+                "schema" : {
+                  "$ref" : "#/components/schemas/DeliveryResult"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/bff/user/internal/mesh-devices/{id}/revoke" : {
+      "post" : {
+        "tags" : [ "Mesh-devices (internal bridge + moderation)" ],
+        "summary" : "REVOKE a mesh device (SERVICE-principal only; the moderator identity comes from the trusted caller's body — mod-bff derives it from the validated moderator JWT). CAS active→revoked stamping revoked_by/revoked_at/revoke_reason: the radio leaves the bridge mapping, its visibility freezes, and its node id stays claimed. Already-revoked is a 409; unknown or out-of-brand id a 404.",
+        "operationId" : "revoke",
+        "parameters" : [ {
+          "name" : "id",
+          "in" : "path",
+          "required" : true,
+          "schema" : {
+            "type" : "string"
+          }
+        } ],
+        "requestBody" : {
+          "content" : {
+            "application/json" : {
+              "schema" : {
+                "$ref" : "#/components/schemas/RevokeRequest"
+              }
+            }
+          },
+          "required" : true
+        },
+        "responses" : {
+          "200" : {
+            "description" : "OK",
+            "content" : {
+              "*/*" : {
+                "schema" : {
+                  "$ref" : "#/components/schemas/ModerationView"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/bff/user/internal/mesh-devices/{id}/restore" : {
+      "post" : {
+        "tags" : [ "Mesh-devices (internal bridge + moderation)" ],
+        "summary" : "RESTORE a revoked mesh device (SERVICE-principal only). CAS revoked→active, CLEARING revoked_by/revoked_at/revoke_reason so the owner stops seeing a stale reason (mod-bff's mod_action ledger keeps the durable record). A device that is not revoked is a 409; unknown or out-of-brand id a 404.",
+        "operationId" : "restore",
+        "parameters" : [ {
+          "name" : "id",
+          "in" : "path",
+          "required" : true,
+          "schema" : {
+            "type" : "string"
+          }
+        } ],
+        "requestBody" : {
+          "content" : {
+            "application/json" : {
+              "schema" : {
+                "$ref" : "#/components/schemas/RestoreRequest"
+              }
+            }
+          },
+          "required" : true
+        },
+        "responses" : {
+          "200" : {
+            "description" : "OK",
+            "content" : {
+              "*/*" : {
+                "schema" : {
+                  "$ref" : "#/components/schemas/ModerationView"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/bff/user/internal/mesh-devices/status" : {
+      "post" : {
+        "tags" : [ "Mesh-devices (internal bridge + moderation)" ],
+        "summary" : "Batch LoRa status write-back from the bridge (SERVICE-principal only). Fail-soft per element: unknown node ids / revoked rows are counted 'ignored'; out-of-range telemetry is clamped. Returns {updated, ignored}.",
+        "operationId" : "applyStatusBatch",
+        "requestBody" : {
+          "content" : {
+            "application/json" : {
+              "schema" : {
+                "type" : "array",
+                "items" : {
+                  "$ref" : "#/components/schemas/StatusReport"
+                }
+              }
+            }
+          },
+          "required" : true
+        },
+        "responses" : {
+          "200" : {
+            "description" : "OK",
+            "content" : {
+              "*/*" : {
+                "schema" : {
+                  "type" : "object",
+                  "additionalProperties" : {
+                    "type" : "object"
+                  }
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/bff/user/internal/character/stickers/{id}/moderation" : {
+      "post" : {
+        "tags" : [ "Character-moderation (internal receiver)" ],
+        "summary" : "Flip a PENDING expression STICKER to ACTIVE/REJECTED on finding resolution (SERVICE-principal only; idempotent — an unknown/already-resolved id is a 404).",
+        "operationId" : "resolveSticker",
+        "parameters" : [ {
+          "name" : "id",
+          "in" : "path",
+          "required" : true,
+          "schema" : {
+            "type" : "string"
+          }
+        } ],
+        "requestBody" : {
+          "content" : {
+            "application/json" : {
+              "schema" : {
+                "$ref" : "#/components/schemas/ResolveRequest"
+              }
+            }
+          },
+          "required" : true
+        },
+        "responses" : {
+          "200" : {
+            "description" : "OK",
+            "content" : {
+              "*/*" : {
+                "schema" : {
+                  "$ref" : "#/components/schemas/VnSticker"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/bff/user/internal/character/parts/{id}/moderation" : {
+      "post" : {
+        "tags" : [ "Character-moderation (internal receiver)" ],
+        "summary" : "Flip a PENDING character PART to ACTIVE/REJECTED on finding resolution (SERVICE-principal only; idempotent — an unknown/already-resolved id is a 404).",
+        "operationId" : "resolvePart",
+        "parameters" : [ {
+          "name" : "id",
+          "in" : "path",
+          "required" : true,
+          "schema" : {
+            "type" : "string"
+          }
+        } ],
+        "requestBody" : {
+          "content" : {
+            "application/json" : {
+              "schema" : {
+                "$ref" : "#/components/schemas/ResolveRequest"
+              }
+            }
+          },
+          "required" : true
+        },
+        "responses" : {
+          "200" : {
+            "description" : "OK",
+            "content" : {
+              "*/*" : {
+                "schema" : {
+                  "$ref" : "#/components/schemas/VnCharacterPart"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/bff/user/character/stickers" : {
+      "get" : {
+        "tags" : [ "Character-stickers" ],
+        "summary" : "List MY VN-character expression stickers (newest first). Owner = JWT subject.",
+        "operationId" : "listMine",
+        "responses" : {
+          "200" : {
+            "description" : "OK",
+            "content" : {
+              "*/*" : {
+                "schema" : {
+                  "type" : "array",
+                  "items" : {
+                    "$ref" : "#/components/schemas/VnSticker"
+                  }
+                }
+              }
+            }
+          }
+        }
+      },
+      "post" : {
+        "tags" : [ "Character-stickers" ],
+        "summary" : "Save a VN-character expression sticker (multipart 'file' = the rendered PNG + 'expression' = a canonical label). The bytes are magic-byte-sniffed (a non-raster/SVG is a 400), size-capped, edge-AI moderated (a blocked sticker is a 422), uploaded to the homeserver media repo, stored status=PENDING, and queued for moderation. Owner = JWT subject.",
+        "operationId" : "save",
+        "requestBody" : {
+          "content" : {
+            "multipart/form-data" : {
+              "schema" : {
+                "required" : [ "expression", "file" ],
+                "type" : "object",
+                "properties" : {
+                  "expression" : {
+                    "type" : "string"
+                  },
+                  "file" : {
+                    "type" : "string",
+                    "format" : "binary"
+                  }
+                }
+              }
+            }
+          }
+        },
+        "responses" : {
+          "200" : {
+            "description" : "OK",
+            "content" : {
+              "*/*" : {
+                "schema" : {
+                  "$ref" : "#/components/schemas/VnSticker"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/bff/user/character/parts" : {
+      "get" : {
+        "tags" : [ "Character-parts" ],
+        "summary" : "List MY character parts (newest first). Owner = JWT subject.",
+        "operationId" : "listMine_1",
+        "responses" : {
+          "200" : {
+            "description" : "OK",
+            "content" : {
+              "*/*" : {
+                "schema" : {
+                  "type" : "array",
+                  "items" : {
+                    "$ref" : "#/components/schemas/VnCharacterPart"
+                  }
+                }
+              }
+            }
+          }
+        }
+      },
+      "post" : {
+        "tags" : [ "Character-parts" ],
+        "summary" : "Save a user-drawn character part. The SVG is server-sanitized (a malformed/non-svg body is a 422), stored status=PENDING, and queued for moderation. Owner = JWT subject.",
+        "operationId" : "save_1",
+        "requestBody" : {
+          "content" : {
+            "application/json" : {
+              "schema" : {
+                "$ref" : "#/components/schemas/SavePartRequest"
+              }
+            }
+          },
+          "required" : true
+        },
+        "responses" : {
+          "200" : {
+            "description" : "OK",
+            "content" : {
+              "*/*" : {
+                "schema" : {
+                  "$ref" : "#/components/schemas/VnCharacterPart"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/bff/user/blocks" : {
+      "get" : {
+        "tags" : [ "Self-block" ],
+        "summary" : "List my self-blocks.",
+        "operationId" : "mine_1",
+        "responses" : {
+          "200" : {
+            "description" : "The caller's own self-blocks (may be empty).",
+            "content" : {
+              "*/*" : {
+                "schema" : {
+                  "type" : "array",
+                  "items" : {
+                    "$ref" : "#/components/schemas/UserBlock"
+                  }
+                }
+              }
+            }
+          },
+          "401" : {
+            "description" : "Missing or invalid Casdoor JWT.",
+            "content" : {
+              "*/*" : {
+                "schema" : {
+                  "type" : "array",
+                  "items" : {
+                    "$ref" : "#/components/schemas/UserBlock"
+                  }
+                }
+              }
+            }
+          },
+          "403" : {
+            "description" : "Principal lacks ROLE_USER.",
+            "content" : {
+              "*/*" : {
+                "schema" : {
+                  "type" : "array",
+                  "items" : {
+                    "$ref" : "#/components/schemas/UserBlock"
+                  }
+                }
+              }
+            }
+          }
+        }
+      },
+      "post" : {
+        "tags" : [ "Self-block" ],
+        "summary" : "Create a self-block (durable row + best-effort external push). Platform-role gated.",
+        "description" : "Records a durable <code>user_block</code> row under the JWT subject,\nthen best-effort pushes to the external homeserver (Matrix/Mastodon; STUBBED by default).\nThe row is the source of truth even if the external push is stubbed or fails.\n\n<h4>Caller-role access matrix</h4>\n<table>\n  <tr><th>Platform</th><th>Required role (API leg + service leg)</th></tr>\n  <tr><td>internal (or absent)</td><td>ROLE_USER floor — no platform role needed</td></tr>\n  <tr><td>matrix</td><td>ROLE_MATRIX (platform access role)</td></tr>\n  <tr><td>mastodon</td><td>ROLE_MASTODON (platform access role)</td></tr>\n</table>\nThe rule is enforced by <code>@PreAuthorize</code> (API leg) AND re-checked in\n<code>BlockService</code> (service leg / defence-in-depth).\n",
+        "operationId" : "block",
+        "requestBody" : {
+          "content" : {
+            "application/json" : {
+              "schema" : {
+                "$ref" : "#/components/schemas/BlockRequest"
+              }
+            }
+          },
+          "required" : true
+        },
+        "responses" : {
+          "200" : {
+            "description" : "Block recorded. 'pushed' indicates whether a live external push ran. 'external' is 'live', 'stubbed', or 'n/a'.",
+            "content" : {
+              "*/*" : {
+                "schema" : {
+                  "type" : "object",
+                  "additionalProperties" : {
+                    "type" : "object"
+                  }
+                }
+              }
+            }
+          },
+          "400" : {
+            "description" : "Missing target, blank platform, or platform not in matrix|mastodon|internal.",
+            "content" : {
+              "*/*" : {
+                "schema" : {
+                  "type" : "object",
+                  "additionalProperties" : {
+                    "type" : "object"
+                  }
+                }
+              }
+            }
+          },
+          "401" : {
+            "description" : "Missing or invalid Casdoor JWT.",
+            "content" : {
+              "*/*" : {
+                "schema" : {
+                  "type" : "object",
+                  "additionalProperties" : {
+                    "type" : "object"
+                  }
+                }
+              }
+            }
+          },
+          "403" : {
+            "description" : "ROLE_MATRIX required for platform=matrix; ROLE_MASTODON for platform=mastodon (API leg + service leg re-check).",
+            "content" : {
+              "*/*" : {
+                "schema" : {
+                  "type" : "object",
+                  "additionalProperties" : {
+                    "type" : "object"
+                  }
+                }
+              }
+            }
+          },
+          "500" : {
+            "description" : "Database error writing the block row.",
+            "content" : {
+              "*/*" : {
+                "schema" : {
+                  "type" : "object",
+                  "additionalProperties" : {
+                    "type" : "object"
+                  }
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/bff/sessionOut" : {
+      "post" : {
+        "tags" : [ "SSO auth" ],
+        "summary" : "Alias of DELETE /bff/session for the POST /bff/sessionOut clients actually call. Revoke the caller's session and expire the bff_ cookie. 503 when the SSO surface is dark.",
+        "operationId" : "sessionOutLegacyAlias",
+        "responses" : {
+          "200" : {
+            "description" : "OK"
+          }
+        }
+      }
+    },
+    "/bff/register" : {
+      "post" : {
+        "tags" : [ "SSO auth" ],
+        "summary" : "Email-provider registration: ensure the account. 503 when the SSO surface is dark.",
+        "operationId" : "register",
+        "requestBody" : {
+          "content" : {
+            "application/json" : {
+              "schema" : {
+                "$ref" : "#/components/schemas/RegisterEmailRequest"
+              }
+            }
+          },
+          "required" : true
+        },
+        "responses" : {
+          "200" : {
+            "description" : "OK",
+            "content" : {
+              "*/*" : {
+                "schema" : {
+                  "type" : "object",
+                  "additionalProperties" : {
+                    "type" : "object"
+                  }
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/bff/register/google" : {
+      "post" : {
+        "tags" : [ "Legacy path parity" ],
+        "summary" : "Invite-gated Google/email registration: ensure the account and mint a bff_ session. admin-bff AuthController parity. 403 when not invited; 409 on a localpart collision; 409 for an already-complete account (decision 57: conflict with the existing account, no restart of onboarding). Records a register usage row on admin-bff (decision 55), fire-and-forget.",
+        "operationId" : "authRegisterGoogle",
+        "requestBody" : {
+          "content" : {
+            "application/json" : {
+              "schema" : {
+                "$ref" : "#/components/schemas/RegisterEmailRequest"
+              }
+            }
+          },
+          "required" : true
+        },
+        "responses" : {
+          "200" : {
+            "description" : "OK",
+            "content" : {
+              "*/*" : {
+                "schema" : {
+                  "type" : "object",
+                  "additionalProperties" : {
+                    "type" : "object"
+                  }
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/bff/register/discord" : {
+      "post" : {
+        "tags" : [ "Legacy path parity" ],
+        "summary" : "Invite-gated Discord registration: ensure the account and mint a bff_ session. admin-bff AuthController parity. 403 when not invited; 409 on a localpart collision; 409 for an already-complete account (decision 57: conflict with the existing account, no restart of onboarding). Records a register usage row on admin-bff (decision 55), fire-and-forget.",
+        "operationId" : "authRegisterDiscord",
+        "requestBody" : {
+          "content" : {
+            "application/json" : {
+              "schema" : {
+                "$ref" : "#/components/schemas/RegisterDiscordRequest"
+              }
+            }
+          },
+          "required" : true
+        },
+        "responses" : {
+          "200" : {
+            "description" : "OK",
+            "content" : {
+              "*/*" : {
+                "schema" : {
+                  "type" : "object",
+                  "additionalProperties" : {
+                    "type" : "object"
+                  }
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/bff/provision/matrix" : {
+      "post" : {
+        "tags" : [ "Legacy path parity" ],
+        "summary" : "Broker/recover the caller's Matrix homeserver token server-side (held in custody; the token is NEVER returned). admin-bff AuthController parity. 403 without ROLE_MATRIX or before registration is complete; 502 on a mint failure.",
+        "operationId" : "authProvisionMatrix",
+        "responses" : {
+          "200" : {
+            "description" : "OK",
+            "content" : {
+              "*/*" : {
+                "schema" : {
+                  "type" : "object",
+                  "additionalProperties" : {
+                    "type" : "object"
+                  }
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/bff/provision/mastodon" : {
+      "post" : {
+        "tags" : [ "Legacy path parity" ],
+        "summary" : "Broker/recover the caller's Mastodon homeserver token server-side (held in custody; the token is NEVER returned). admin-bff AuthController parity. 403 without ROLE_MASTODON or before registration is complete; 502 on a mint failure.",
+        "operationId" : "authProvisionMastodon",
+        "responses" : {
+          "200" : {
+            "description" : "OK",
+            "content" : {
+              "*/*" : {
+                "schema" : {
+                  "type" : "object",
+                  "additionalProperties" : {
+                    "type" : "object"
+                  }
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/bff/password-reset/request" : {
+      "post" : {
+        "tags" : [ "Password reset" ],
+        "summary" : "Request a password-reset code, mailed by the IdP to the address it holds for the account. ALWAYS 202 for a well-formed request — a non-existent username is indistinguishable from an existing one (anti-enumeration). 503 when password reset is dark.",
+        "operationId" : "request",
+        "requestBody" : {
+          "content" : {
+            "application/json" : {
+              "schema" : {
+                "$ref" : "#/components/schemas/ResetRequest"
+              }
+            }
+          },
+          "required" : true
+        },
+        "responses" : {
+          "200" : {
+            "description" : "OK",
+            "content" : {
+              "*/*" : {
+                "schema" : {
+                  "type" : "object",
+                  "additionalProperties" : {
+                    "type" : "object"
+                  }
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/bff/password-reset/confirm" : {
+      "post" : {
+        "tags" : [ "Password reset" ],
+        "summary" : "Redeem a reset code and set a new password. 200 only when the IdP actually wrote the credential; 400 with one non-revealing message when the code or the new password was refused; 503 when password reset is dark.",
+        "operationId" : "confirm",
+        "requestBody" : {
+          "content" : {
+            "application/json" : {
+              "schema" : {
+                "$ref" : "#/components/schemas/ResetConfirm"
+              }
+            }
+          },
+          "required" : true
+        },
+        "responses" : {
+          "200" : {
+            "description" : "OK",
+            "content" : {
+              "*/*" : {
+                "schema" : {
+                  "type" : "object",
+                  "additionalProperties" : {
+                    "type" : "object"
+                  }
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/bff/login" : {
+      "post" : {
+        "tags" : [ "SSO auth" ],
+        "summary" : "Native login: verify username+password SERVER-SIDE at Casdoor, then exchange the code, provision the account+session and set the bff_ cookie. 200 {registrationComplete,status,mfaRequired:false} on success; 200 {mfaRequired:true} when a second factor is needed (no cookie); 401 invalid_credentials on bad creds. 503 when the SSO surface is dark.",
+        "operationId" : "login",
+        "requestBody" : {
+          "content" : {
+            "application/json" : {
+              "schema" : {
+                "$ref" : "#/components/schemas/NativeLoginRequest"
+              }
+            }
+          },
+          "required" : true
+        },
+        "responses" : {
+          "200" : {
+            "description" : "OK",
+            "content" : {
+              "*/*" : {
+                "schema" : {
+                  "type" : "object"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/v3/api-docs" : {
+      "get" : {
+        "tags" : [ "probes" ],
+        "operationId" : "apiDocs",
+        "responses" : {
+          "200" : {
+            "description" : "OK",
+            "content" : {
+              "*/*" : {
+                "schema" : {
+                  "type" : "string"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/bff/user/status" : {
+      "get" : {
+        "tags" : [ "Account status" ],
+        "summary" : "Caller's own account status — active roles, domain scope, and self-silence state.",
+        "operationId" : "status",
+        "responses" : {
+          "200" : {
+            "description" : "OK",
+            "content" : {
+              "*/*" : {
+                "schema" : {
+                  "type" : "object",
+                  "additionalProperties" : {
+                    "type" : "object"
+                  }
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/bff/user/sessions" : {
+      "get" : {
+        "tags" : [ "Sessions" ],
+        "summary" : "List my active login sessions (owner = JWT-derived account; ids are opaque fingerprints, never the raw session token).",
+        "operationId" : "listMine_2",
+        "responses" : {
+          "200" : {
+            "description" : "OK",
+            "content" : {
+              "*/*" : {
+                "schema" : {
+                  "type" : "array",
+                  "items" : {
+                    "$ref" : "#/components/schemas/UserSession"
+                  }
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/bff/user/self-silence/status" : {
+      "get" : {
+        "tags" : [ "Self-silence" ],
+        "summary" : "My self-silence status (active or cleared).",
+        "operationId" : "status_1",
+        "responses" : {
+          "200" : {
+            "description" : "OK",
+            "content" : {
+              "*/*" : {
+                "schema" : {
+                  "$ref" : "#/components/schemas/SelfSilence"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/bff/user/profile/avatar/body" : {
+      "get" : {
+        "tags" : [ "Profile" ],
+        "summary" : "Serve MY profile picture bytes. Returns the stored image with the sniffed content type recorded at upload; 404 when I have no stored picture. Owner = JWT subject.",
+        "operationId" : "serveAvatar",
+        "responses" : {
+          "200" : {
+            "description" : "OK",
+            "content" : {
+              "*/*" : {
+                "schema" : {
+                  "type" : "string",
+                  "format" : "byte"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/bff/user/notifications" : {
+      "get" : {
+        "tags" : [ "Notifications (in-app floor)" ],
+        "summary" : "My in-app notifications (newest first, server-capped).",
+        "operationId" : "list",
+        "parameters" : [ {
+          "name" : "limit",
+          "in" : "query",
+          "required" : false,
+          "schema" : {
+            "maximum" : 100,
+            "minimum" : 1,
+            "type" : "integer",
+            "format" : "int32",
+            "default" : 50
+          }
+        } ],
+        "responses" : {
+          "200" : {
+            "description" : "OK",
+            "content" : {
+              "*/*" : {
+                "schema" : {
+                  "type" : "array",
+                  "items" : {
+                    "$ref" : "#/components/schemas/UserNotification"
+                  }
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/bff/user/notifications/events" : {
+      "get" : {
+        "tags" : [ "Notifications (in-app floor)" ],
+        "summary" : "Real-time notification event stream (SSE). Client reconnects on close.",
+        "operationId" : "stream",
+        "responses" : {
+          "200" : {
+            "description" : "OK",
+            "content" : {
+              "text/event-stream" : {
+                "schema" : {
+                  "type" : "array",
+                  "items" : {
+                    "$ref" : "#/components/schemas/ServerSentEventSseNotificationEvent"
+                  }
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/bff/user/media/status/{ref}" : {
+      "get" : {
+        "tags" : [ "Media-cloak" ],
+        "summary" : "My cloak decision for a media ref (badge polling), owner-scoped.",
+        "operationId" : "status_2",
+        "parameters" : [ {
+          "name" : "ref",
+          "in" : "path",
+          "required" : true,
+          "schema" : {
+            "type" : "string"
+          }
+        } ],
+        "responses" : {
+          "200" : {
+            "description" : "OK",
+            "content" : {
+              "*/*" : {
+                "schema" : {
+                  "$ref" : "#/components/schemas/MediaPoisonDecision"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/bff/user/media/capability" : {
+      "get" : {
+        "tags" : [ "Media-cloak" ],
+        "summary" : "AI-cloak capability (worker backend + modes + ETA) for the shield state.",
+        "operationId" : "capability",
+        "responses" : {
+          "200" : {
+            "description" : "OK",
+            "content" : {
+              "*/*" : {
+                "schema" : {
+                  "type" : "object",
+                  "additionalProperties" : {
+                    "type" : "object"
+                  }
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/bff/user/internal/mesh-devices" : {
+      "get" : {
+        "tags" : [ "Mesh-devices (internal bridge + moderation)" ],
+        "summary" : "FULL mesh-device mapping for the bridge (SERVICE-principal only; every ACTIVE claim across all owners and domains). Rows whose owner's Matrix localpart cannot be resolved are omitted (fail-soft).",
+        "operationId" : "fullMapping",
+        "responses" : {
+          "200" : {
+            "description" : "OK",
+            "content" : {
+              "*/*" : {
+                "schema" : {
+                  "type" : "array",
+                  "items" : {
+                    "$ref" : "#/components/schemas/BridgeMapping"
+                  }
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/bff/user/internal/mesh-devices/moderation" : {
+      "get" : {
+        "tags" : [ "Mesh-devices (internal bridge + moderation)" ],
+        "summary" : "MODERATOR console list of mesh devices (SERVICE-principal only; every owner, newest claim first). Optional ?state=active|revoked filter and ?domain= brand scope (omit the domain ONLY for a cross-domain SUPERADMIN view); ?limit is server-clamped. Unlike the bridge mapping this KEEPS rows whose owner localpart cannot be resolved — a moderator must still see an un-attributable radio (ownerLocalpart is then null).",
+        "operationId" : "moderationList",
+        "parameters" : [ {
+          "name" : "state",
+          "in" : "query",
+          "required" : false,
+          "schema" : {
+            "pattern" : "^(active|revoked)?$",
+            "type" : "string"
+          }
+        }, {
+          "name" : "domain",
+          "in" : "query",
+          "required" : false,
+          "schema" : {
+            "maxLength" : 255,
+            "minLength" : 0,
+            "type" : "string"
+          }
+        }, {
+          "name" : "limit",
+          "in" : "query",
+          "required" : false,
+          "schema" : {
+            "type" : "integer",
+            "format" : "int32"
+          }
+        } ],
+        "responses" : {
+          "200" : {
+            "description" : "OK",
+            "content" : {
+              "*/*" : {
+                "schema" : {
+                  "type" : "array",
+                  "items" : {
+                    "$ref" : "#/components/schemas/ModerationView"
+                  }
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/bff/user/home-guide" : {
+      "get" : {
+        "tags" : [ "Home guide" ],
+        "summary" : "Is the named guide dismissed for me? (default guide = 'home')",
+        "operationId" : "status_3",
+        "parameters" : [ {
+          "name" : "guide",
+          "in" : "query",
+          "required" : false,
+          "schema" : {
+            "pattern" : "^[A-Za-z0-9][A-Za-z0-9-]{0,63}$",
+            "type" : "string"
+          }
+        } ],
+        "responses" : {
+          "200" : {
+            "description" : "OK",
+            "content" : {
+              "*/*" : {
+                "schema" : {
+                  "type" : "object",
+                  "additionalProperties" : {
+                    "type" : "object"
+                  }
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/bff/user/connected-clients" : {
+      "get" : {
+        "tags" : [ "Connected clients" ],
+        "summary" : "List my connected apps + device sessions (owner = JWT subject). Requires an external-client role.",
+        "operationId" : "mine_2",
+        "responses" : {
+          "200" : {
+            "description" : "The caller's connected apps + device sessions. Merges durable audit rows with live homeserver read (best-effort, may be empty when seams are stubbed).",
+            "content" : {
+              "*/*" : {
+                "schema" : {
+                  "type" : "array",
+                  "items" : {
+                    "$ref" : "#/components/schemas/ConnectedClient"
+                  }
+                }
+              }
+            }
+          },
+          "401" : {
+            "description" : "Missing or invalid Casdoor JWT.",
+            "content" : {
+              "*/*" : {
+                "schema" : {
+                  "type" : "array",
+                  "items" : {
+                    "$ref" : "#/components/schemas/ConnectedClient"
+                  }
+                }
+              }
+            }
+          },
+          "403" : {
+            "description" : "Caller lacks ROLE_MATRIX_EXTERNAL_CLIENT or ROLE_MASTODON_EXTERNAL_CLIENT.",
+            "content" : {
+              "*/*" : {
+                "schema" : {
+                  "type" : "array",
+                  "items" : {
+                    "$ref" : "#/components/schemas/ConnectedClient"
+                  }
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/bff/user/character/stickers/{slug}/body" : {
+      "get" : {
+        "tags" : [ "Character-stickers" ],
+        "summary" : "Serve a sticker's stored image bytes by slug (= the sticker id the list returns). ACTIVE stickers serve to any user in the sticker's domain (they render inside other users' forum posts); a PENDING sticker serves ONLY to its owner (composer preview); a REJECTED sticker never serves. Any miss — unknown/malformed slug, foreign PENDING, REJECTED, no stored pixels — is a uniform 404.",
+        "operationId" : "serveBody",
+        "parameters" : [ {
+          "name" : "slug",
+          "in" : "path",
+          "required" : true,
+          "schema" : {
+            "type" : "string"
+          }
+        } ],
+        "responses" : {
+          "200" : {
+            "description" : "OK",
+            "content" : {
+              "*/*" : {
+                "schema" : {
+                  "type" : "string",
+                  "format" : "byte"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/bff/user/character/parts/{id}/svg" : {
+      "get" : {
+        "tags" : [ "Character-parts" ],
+        "summary" : "Serve MY stored, SANITIZED part SVG as a hardened image (image/svg+xml + locked-down CSP). A part that is not mine is a 404. Owner = JWT subject.",
+        "operationId" : "serveSvg",
+        "parameters" : [ {
+          "name" : "id",
+          "in" : "path",
+          "required" : true,
+          "schema" : {
+            "type" : "string"
+          }
+        } ],
+        "responses" : {
+          "200" : {
+            "description" : "OK",
+            "content" : {
+              "*/*" : {
+                "schema" : {
+                  "type" : "string"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/bff/user/character/avatar" : {
+      "get" : {
+        "tags" : [ "Character-avatar" ],
+        "summary" : "My VN character-avatar serve handle + its image URL (the value to store as a forum VN profile characterImgRef). 404 when I have no stored profile picture. Owner = JWT subject.",
+        "operationId" : "myRef",
+        "responses" : {
+          "200" : {
+            "description" : "OK",
+            "content" : {
+              "*/*" : {
+                "schema" : {
+                  "$ref" : "#/components/schemas/CharacterAvatarRef"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/bff/user/character/avatar/{ref}/body" : {
+      "get" : {
+        "tags" : [ "Character-avatar" ],
+        "summary" : "Serve the raster bytes behind a character-avatar handle. Readable by the owner and by other users in the same brand (a VN sprite has to render inside their posts); any miss — malformed/unknown handle, cross-brand caller, no stored pixels, non-raster stored type — is a uniform 404.",
+        "operationId" : "serveBody_1",
+        "parameters" : [ {
+          "name" : "ref",
+          "in" : "path",
+          "required" : true,
+          "schema" : {
+            "type" : "string"
+          }
+        } ],
+        "responses" : {
+          "200" : {
+            "description" : "OK",
+            "content" : {
+              "*/*" : {
+                "schema" : {
+                  "type" : "string",
+                  "format" : "byte"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/bff/user/cards" : {
+      "get" : {
+        "tags" : [ "Cards" ],
+        "summary" : "List my cards (my federation bundles).",
+        "operationId" : "mine_3",
+        "responses" : {
+          "200" : {
+            "description" : "OK",
+            "content" : {
+              "*/*" : {
+                "schema" : {
+                  "type" : "array",
+                  "items" : {
+                    "$ref" : "#/components/schemas/UserModuleCard"
+                  }
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/bff/user/cards/{slug}/body" : {
+      "get" : {
+        "tags" : [ "Cards" ],
+        "summary" : "Read my card's current body (source) by slug — for Edit pre-fill.",
+        "description" : "Proxies federation-api's owner-scoped read-my-card-body so the WYSIWYG editor can RE-READ a card's current source to edit it. Owner-enforced upstream via the forwarded JWT (a non-owner gets 404 from federation-api). Returns the raw entry-file bytes.",
+        "operationId" : "body",
+        "parameters" : [ {
+          "name" : "slug",
+          "in" : "path",
+          "required" : true,
+          "schema" : {
+            "pattern" : "^[a-z0-9](?:[a-z0-9-]{0,126}[a-z0-9])?$",
+            "type" : "string"
+          }
+        } ],
+        "responses" : {
+          "200" : {
+            "description" : "OK",
+            "content" : {
+              "application/octet-stream" : {
+                "schema" : {
+                  "type" : "string",
+                  "format" : "byte"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/bff/user/_probe" : {
+      "get" : {
+        "tags" : [ "probes" ],
+        "operationId" : "userSurface",
+        "responses" : {
+          "200" : {
+            "description" : "OK",
+            "content" : {
+              "*/*" : {
+                "schema" : {
+                  "type" : "string"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/bff/session" : {
+      "get" : {
+        "tags" : [ "SSO auth" ],
+        "summary" : "The caller's session view (from admin-bff), read from the bff_ cookie. PermitAll + cookie-authenticated (NO JWT) so the login SPA can hydrate its session straight after login — when the browser holds only the bff_ cookie, not a gateway-minted JWT (which is what /me requires). Same body as /me. 401 when there is no session; 503 when the SSO surface is dark.",
+        "operationId" : "session",
+        "responses" : {
+          "200" : {
+            "description" : "OK",
+            "content" : {
+              "*/*" : {
+                "schema" : {
+                  "type" : "object",
+                  "additionalProperties" : {
+                    "type" : "object"
+                  }
+                }
+              }
+            }
+          }
+        }
+      },
+      "delete" : {
+        "tags" : [ "SSO auth" ],
+        "summary" : "Revoke the caller's session (sessionOut) and expire the bff_ cookie. 503 when the SSO surface is dark.",
+        "operationId" : "sessionOut",
+        "responses" : {
+          "200" : {
+            "description" : "OK"
+          }
+        }
+      }
+    },
+    "/bff/me" : {
+      "get" : {
+        "tags" : [ "SSO auth" ],
+        "summary" : "The caller's account view (from admin-bff). Authenticated. 503 when the SSO surface is dark.",
+        "operationId" : "me_1",
+        "responses" : {
+          "200" : {
+            "description" : "OK",
+            "content" : {
+              "*/*" : {
+                "schema" : {
+                  "type" : "object",
+                  "additionalProperties" : {
+                    "type" : "object"
+                  }
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/bff/me/namespaces" : {
+      "get" : {
+        "tags" : [ "Legacy path parity" ],
+        "summary" : "The caller's own granted namespaces. admin-bff AuthController parity (cluster routes /bff/me/** to user-bff). 401 with no resolvable account.",
+        "operationId" : "authMyNamespaces",
+        "responses" : {
+          "200" : {
+            "description" : "OK",
+            "content" : {
+              "*/*" : {
+                "schema" : {
+                  "type" : "object",
+                  "additionalProperties" : {
+                    "type" : "object"
+                  }
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/actuator/info" : {
+      "get" : {
+        "tags" : [ "probes" ],
+        "operationId" : "info",
+        "responses" : {
+          "200" : {
+            "description" : "OK",
+            "content" : {
+              "*/*" : {
+                "schema" : {
+                  "type" : "string"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/actuator/health" : {
+      "get" : {
+        "tags" : [ "probes" ],
+        "operationId" : "health",
+        "responses" : {
+          "200" : {
+            "description" : "OK",
+            "content" : {
+              "*/*" : {
+                "schema" : {
+                  "type" : "string"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/bff/user/sessions/{id}" : {
+      "delete" : {
+        "tags" : [ "Sessions" ],
+        "summary" : "Revoke one of my sessions by its opaque id. A foreign/unknown id is a generic 404 (anti-enumeration). Revoking my own current session is allowed.",
+        "operationId" : "revokeMine",
+        "parameters" : [ {
+          "name" : "id",
+          "in" : "path",
+          "required" : true,
+          "schema" : {
+            "type" : "string"
+          }
+        } ],
+        "responses" : {
+          "200" : {
+            "description" : "OK"
+          }
+        }
+      }
+    },
+    "/bff/user/mesh-devices/{id}" : {
+      "delete" : {
+        "tags" : [ "Mesh-devices" ],
+        "summary" : "Release one of MY mesh-device claims (scoped to me + id). Releasing a REVOKED row is allowed and frees the node id.",
+        "operationId" : "release",
+        "parameters" : [ {
+          "name" : "id",
+          "in" : "path",
+          "required" : true,
+          "schema" : {
+            "type" : "string"
+          }
+        } ],
+        "responses" : {
+          "204" : {
+            "description" : "Claim released."
+          },
+          "401" : {
+            "description" : "Missing or invalid Casdoor JWT."
+          },
+          "403" : {
+            "description" : "Principal lacks ROLE_USER."
+          },
+          "404" : {
+            "description" : "No such mesh device for this user (or wrong domain)."
+          },
+          "500" : {
+            "description" : "Database error."
+          }
+        }
+      }
+    },
+    "/bff/user/connected-clients/{id}" : {
+      "delete" : {
+        "tags" : [ "Connected clients" ],
+        "summary" : "Revoke one of my connected clients (per-credential gateway key + best-effort homeserver delete + audit stamp).",
+        "description" : "Revokes one of the caller's own connected clients by its audit-row id.\nRevocation order: (1) write the per-credential gateway key\n<code>hs:<platform>:<localpart>:<externalRef></code> (gateway denies future use within &#x2264;5s),\n(2) best-effort DELETE at the homeserver, (3) stamp <code>revoked_at</code> on the audit row.\nAll three steps are owner+domain scoped. Steps 2 and 3 are best-effort; the gateway key is\nthe durable enforcement.\n",
+        "operationId" : "revoke_1",
+        "parameters" : [ {
+          "name" : "id",
+          "in" : "path",
+          "required" : true,
+          "schema" : {
+            "pattern" : "^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$",
+            "type" : "string"
+          }
+        } ],
+        "responses" : {
+          "200" : {
+            "description" : "Client revoked. 'revocationKey' is 'written' or 'stubbed'; 'upstream' is 'live' or 'stubbed'.",
+            "content" : {
+              "*/*" : {
+                "schema" : {
+                  "type" : "object",
+                  "additionalProperties" : {
+                    "type" : "object"
+                  }
+                }
+              }
+            }
+          },
+          "400" : {
+            "description" : "id is not a valid UUID.",
+            "content" : {
+              "*/*" : {
+                "schema" : {
+                  "type" : "object",
+                  "additionalProperties" : {
+                    "type" : "object"
+                  }
+                }
+              }
+            }
+          },
+          "401" : {
+            "description" : "Missing or invalid Casdoor JWT.",
+            "content" : {
+              "*/*" : {
+                "schema" : {
+                  "type" : "object",
+                  "additionalProperties" : {
+                    "type" : "object"
+                  }
+                }
+              }
+            }
+          },
+          "403" : {
+            "description" : "Caller lacks the external-client role for the client's platform (service leg re-check).",
+            "content" : {
+              "*/*" : {
+                "schema" : {
+                  "type" : "object",
+                  "additionalProperties" : {
+                    "type" : "object"
+                  }
+                }
+              }
+            }
+          },
+          "404" : {
+            "description" : "No such active connected client for this user.",
+            "content" : {
+              "*/*" : {
+                "schema" : {
+                  "type" : "object",
+                  "additionalProperties" : {
+                    "type" : "object"
+                  }
+                }
+              }
+            }
+          },
+          "409" : {
+            "description" : "Caller's account has no persisted homeserver localpart yet (fail-closed localpart resolution).",
+            "content" : {
+              "*/*" : {
+                "schema" : {
+                  "type" : "object",
+                  "additionalProperties" : {
+                    "type" : "object"
+                  }
+                }
+              }
+            }
+          },
+          "500" : {
+            "description" : "Database error.",
+            "content" : {
+              "*/*" : {
+                "schema" : {
+                  "type" : "object",
+                  "additionalProperties" : {
+                    "type" : "object"
+                  }
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/bff/user/blocks/{id}" : {
+      "delete" : {
+        "tags" : [ "Self-block" ],
+        "summary" : "Remove one of my self-blocks (scoped to me + id).",
+        "operationId" : "unblock",
+        "parameters" : [ {
+          "name" : "id",
+          "in" : "path",
+          "required" : true,
+          "schema" : {
+            "pattern" : "^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$",
+            "type" : "string"
+          }
+        } ],
+        "responses" : {
+          "204" : {
+            "description" : "Block removed."
+          },
+          "400" : {
+            "description" : "id is not a valid UUID."
+          },
+          "401" : {
+            "description" : "Missing or invalid Casdoor JWT."
+          },
+          "404" : {
+            "description" : "No such block for this user (or wrong domain)."
+          },
+          "500" : {
+            "description" : "Database error."
+          }
+        }
+      }
+    },
+    "/bff/user/matrix/**" : {
+      "get" : {
+        "tags" : [ "Matrix proxy (D6)" ],
+        "summary" : "Reverse-proxy any Matrix client-API call with the server-held native token (owner = JWT subject). 503 when the feature is dark.",
+        "operationId" : "proxy",
+        "responses" : {
+          "200" : {
+            "description" : "OK"
+          }
+        }
+      },
+      "put" : {
+        "tags" : [ "Matrix proxy (D6)" ],
+        "summary" : "Reverse-proxy any Matrix client-API call with the server-held native token (owner = JWT subject). 503 when the feature is dark.",
+        "operationId" : "proxy_2",
+        "responses" : {
+          "200" : {
+            "description" : "OK"
+          }
+        }
+      },
+      "post" : {
+        "tags" : [ "Matrix proxy (D6)" ],
+        "summary" : "Reverse-proxy any Matrix client-API call with the server-held native token (owner = JWT subject). 503 when the feature is dark.",
+        "operationId" : "proxy_1",
+        "responses" : {
+          "200" : {
+            "description" : "OK"
+          }
+        }
+      },
+      "delete" : {
+        "tags" : [ "Matrix proxy (D6)" ],
+        "summary" : "Reverse-proxy any Matrix client-API call with the server-held native token (owner = JWT subject). 503 when the feature is dark.",
+        "operationId" : "proxy_3",
+        "responses" : {
+          "200" : {
+            "description" : "OK"
+          }
+        }
+      },
+      "options" : {
+        "tags" : [ "Matrix proxy (D6)" ],
+        "summary" : "Reverse-proxy any Matrix client-API call with the server-held native token (owner = JWT subject). 503 when the feature is dark.",
+        "operationId" : "proxy_6",
+        "responses" : {
+          "200" : {
+            "description" : "OK"
+          }
+        }
+      },
+      "head" : {
+        "tags" : [ "Matrix proxy (D6)" ],
+        "summary" : "Reverse-proxy any Matrix client-API call with the server-held native token (owner = JWT subject). 503 when the feature is dark.",
+        "operationId" : "proxy_5",
+        "responses" : {
+          "200" : {
+            "description" : "OK"
+          }
+        }
+      },
+      "patch" : {
+        "tags" : [ "Matrix proxy (D6)" ],
+        "summary" : "Reverse-proxy any Matrix client-API call with the server-held native token (owner = JWT subject). 503 when the feature is dark.",
+        "operationId" : "proxy_4",
+        "responses" : {
+          "200" : {
+            "description" : "OK"
+          }
+        }
+      }
+    },
+    "/bff/user/mastodon/**" : {
+      "get" : {
+        "tags" : [ "Mastodon proxy (D6)" ],
+        "summary" : "Reverse-proxy any Mastodon API call with the server-held native token (owner = JWT subject). 503 when the feature is dark.",
+        "operationId" : "proxy_7",
+        "responses" : {
+          "200" : {
+            "description" : "OK"
+          }
+        }
+      },
+      "put" : {
+        "tags" : [ "Mastodon proxy (D6)" ],
+        "summary" : "Reverse-proxy any Mastodon API call with the server-held native token (owner = JWT subject). 503 when the feature is dark.",
+        "operationId" : "proxy_9",
+        "responses" : {
+          "200" : {
+            "description" : "OK"
+          }
+        }
+      },
+      "post" : {
+        "tags" : [ "Mastodon proxy (D6)" ],
+        "summary" : "Reverse-proxy any Mastodon API call with the server-held native token (owner = JWT subject). 503 when the feature is dark.",
+        "operationId" : "proxy_8",
+        "responses" : {
+          "200" : {
+            "description" : "OK"
+          }
+        }
+      },
+      "delete" : {
+        "tags" : [ "Mastodon proxy (D6)" ],
+        "summary" : "Reverse-proxy any Mastodon API call with the server-held native token (owner = JWT subject). 503 when the feature is dark.",
+        "operationId" : "proxy_10",
+        "responses" : {
+          "200" : {
+            "description" : "OK"
+          }
+        }
+      },
+      "options" : {
+        "tags" : [ "Mastodon proxy (D6)" ],
+        "summary" : "Reverse-proxy any Mastodon API call with the server-held native token (owner = JWT subject). 503 when the feature is dark.",
+        "operationId" : "proxy_13",
+        "responses" : {
+          "200" : {
+            "description" : "OK"
+          }
+        }
+      },
+      "head" : {
+        "tags" : [ "Mastodon proxy (D6)" ],
+        "summary" : "Reverse-proxy any Mastodon API call with the server-held native token (owner = JWT subject). 503 when the feature is dark.",
+        "operationId" : "proxy_12",
+        "responses" : {
+          "200" : {
+            "description" : "OK"
+          }
+        }
+      },
+      "patch" : {
+        "tags" : [ "Mastodon proxy (D6)" ],
+        "summary" : "Reverse-proxy any Mastodon API call with the server-held native token (owner = JWT subject). 503 when the feature is dark.",
+        "operationId" : "proxy_11",
+        "responses" : {
+          "200" : {
+            "description" : "OK"
+          }
+        }
+      }
+    }
+  },
+  "components" : {
+    "schemas" : {
+      "UserProfile" : {
+        "type" : "object",
+        "properties" : {
+          "userId" : {
+            "type" : "string"
+          },
+          "gender" : {
+            "maxLength" : 64,
+            "minLength" : 0,
+            "type" : "string"
+          },
+          "pronouns" : {
+            "maxLength" : 64,
+            "minLength" : 0,
+            "type" : "string"
+          },
+          "timezone" : {
+            "maxLength" : 64,
+            "minLength" : 0,
+            "type" : "string"
+          },
+          "displayName" : {
+            "maxLength" : 255,
+            "minLength" : 0,
+            "type" : "string"
+          },
+          "visibility" : {
+            "pattern" : "^(public|internal)$",
+            "type" : "string"
+          },
+          "vanitySubdomainEnabled" : {
+            "type" : "boolean"
+          },
+          "vanityUsername" : {
+            "type" : "string",
+            "readOnly" : true
+          },
+          "screenReaderName" : {
+            "maxLength" : 255,
+            "minLength" : 0,
+            "type" : "string"
+          },
+          "avatarUrl" : {
+            "type" : "string",
+            "readOnly" : true
+          }
+        }
+      },
+      "UserPreferenceUpsert" : {
+        "required" : [ "key" ],
+        "type" : "object",
+        "properties" : {
+          "key" : {
+            "maxLength" : 128,
+            "minLength" : 0,
+            "pattern" : "^[A-Za-z0-9](?:[A-Za-z0-9._-]{0,126}[A-Za-z0-9])?$",
+            "type" : "string"
+          },
+          "value" : {
+            "maxLength" : 1024,
+            "minLength" : 0,
+            "type" : "string"
+          }
+        }
+      },
+      "NotificationPreferenceUpsert" : {
+        "required" : [ "category", "enabled" ],
+        "type" : "object",
+        "properties" : {
+          "category" : {
+            "maxLength" : 64,
+            "minLength" : 0,
+            "pattern" : "^[a-z][a-z-]{0,63}$",
+            "type" : "string"
+          },
+          "enabled" : {
+            "type" : "boolean"
+          }
+        }
+      },
+      "VisibilityRequest" : {
+        "required" : [ "visibility" ],
+        "type" : "object",
+        "properties" : {
+          "visibility" : {
+            "minLength" : 1,
+            "pattern" : "^(private|friends|channels)$",
+            "type" : "string"
+          }
+        }
+      },
+      "MeshDevice" : {
+        "type" : "object",
+        "properties" : {
+          "id" : {
+            "type" : "string"
+          },
+          "nodeId" : {
+            "type" : "string"
+          },
+          "label" : {
+            "type" : "string"
+          },
+          "visibility" : {
+            "type" : "string"
+          },
+          "state" : {
+            "type" : "string"
+          },
+          "revokeReason" : {
+            "type" : "string"
+          },
+          "revokedAt" : {
+            "type" : "string",
+            "format" : "date-time"
+          },
+          "lastSeenAt" : {
+            "type" : "string",
+            "format" : "date-time"
+          },
+          "batteryPct" : {
+            "type" : "integer",
+            "format" : "int32"
+          },
+          "snr" : {
+            "type" : "number",
+            "format" : "double"
+          },
+          "hopsAway" : {
+            "type" : "integer",
+            "format" : "int32"
+          },
+          "viaDevice" : {
+            "type" : "string"
+          },
+          "createdAt" : {
+            "type" : "string",
+            "format" : "date-time"
+          }
+        }
+      },
+      "UserModuleCard" : {
+        "type" : "object",
+        "properties" : {
+          "id" : {
+            "type" : "integer",
+            "format" : "int64"
+          },
+          "ownerUserId" : {
+            "type" : "string"
+          },
+          "slug" : {
+            "type" : "string"
+          },
+          "versionDir" : {
+            "type" : "string"
+          },
+          "contentHash" : {
+            "type" : "string"
+          },
+          "manifestJson" : {
+            "type" : "string"
+          },
+          "visibility" : {
+            "type" : "string"
+          },
+          "createdAt" : {
+            "type" : "string",
+            "format" : "date-time"
+          },
+          "supersededAt" : {
+            "type" : "string",
+            "format" : "date-time"
+          }
+        }
+      },
+      "EmailModRequest" : {
+        "type" : "object",
+        "properties" : {
+          "reason" : {
+            "maxLength" : 2048,
+            "minLength" : 0,
+            "type" : "string"
+          }
+        }
+      },
+      "ActivateRequest" : {
+        "required" : [ "expiresAt" ],
+        "type" : "object",
+        "properties" : {
+          "expiresAt" : {
+            "type" : "string",
+            "format" : "date-time"
+          },
+          "reason" : {
+            "maxLength" : 2048,
+            "minLength" : 0,
+            "type" : "string"
+          }
+        }
+      },
+      "SelfSilence" : {
+        "type" : "object",
+        "properties" : {
+          "userId" : {
+            "type" : "string"
+          },
+          "startedAt" : {
+            "type" : "string",
+            "format" : "date-time"
+          },
+          "expiresAt" : {
+            "type" : "string",
+            "format" : "date-time"
+          },
+          "clearedAt" : {
+            "type" : "string",
+            "format" : "date-time"
+          },
+          "reason" : {
+            "type" : "string"
+          },
+          "updatedAt" : {
+            "type" : "string",
+            "format" : "date-time"
+          }
+        }
+      },
+      "RecommendRequest" : {
+        "required" : [ "instance" ],
+        "type" : "object",
+        "properties" : {
+          "instance" : {
+            "maxLength" : 512,
+            "minLength" : 0,
+            "type" : "string"
+          },
+          "reason" : {
+            "maxLength" : 2048,
+            "minLength" : 0,
+            "type" : "string"
+          }
+        }
+      },
+      "PasswordChangeRequest" : {
+        "required" : [ "newPassword" ],
+        "type" : "object",
+        "properties" : {
+          "oldPassword" : {
+            "type" : "string"
+          },
+          "newPassword" : {
+            "maxLength" : 256,
+            "minLength" : 1,
+            "type" : "string"
+          }
+        }
+      },
+      "EmailChangeRequest" : {
+        "required" : [ "email" ],
+        "type" : "object",
+        "properties" : {
+          "email" : {
+            "maxLength" : 320,
+            "minLength" : 0,
+            "type" : "string",
+            "format" : "email"
+          }
+        }
+      },
+      "SeedRequest" : {
+        "required" : [ "category" ],
+        "type" : "object",
+        "properties" : {
+          "category" : {
+            "maxLength" : 64,
+            "minLength" : 0,
+            "pattern" : "^[a-z][a-z-]{0,63}$",
+            "type" : "string"
+          },
+          "title" : {
+            "maxLength" : 512,
+            "minLength" : 0,
+            "type" : "string"
+          },
+          "body" : {
+            "maxLength" : 100000,
+            "minLength" : 0,
+            "type" : "string"
+          },
+          "sourceId" : {
+            "maxLength" : 128,
+            "minLength" : 0,
+            "pattern" : "^[A-Za-z0-9][A-Za-z0-9_.-]{0,127}$",
+            "type" : "string"
+          }
+        }
+      },
+      "SeedResult" : {
+        "type" : "object",
+        "properties" : {
+          "id" : {
+            "type" : "string"
+          },
+          "delivered" : {
+            "type" : "boolean"
+          },
+          "deduped" : {
+            "type" : "boolean"
+          },
+          "reason" : {
+            "type" : "string"
+          }
+        }
+      },
+      "ClaimRequest" : {
+        "required" : [ "nodeId" ],
+        "type" : "object",
+        "properties" : {
+          "nodeId" : {
+            "minLength" : 1,
+            "pattern" : "^!?[0-9a-fA-F]{8}$",
+            "type" : "string"
+          },
+          "label" : {
+            "maxLength" : 64,
+            "minLength" : 0,
+            "type" : "string"
+          }
+        }
+      },
+      "DeliverRequest" : {
+        "required" : [ "category", "domain", "sourceId", "sourceTable", "title", "userSubject" ],
+        "type" : "object",
+        "properties" : {
+          "domain" : {
+            "maxLength" : 64,
+            "minLength" : 0,
+            "pattern" : "^[A-Za-z0-9][A-Za-z0-9_.-]{0,63}$",
+            "type" : "string"
+          },
+          "userSubject" : {
+            "maxLength" : 255,
+            "minLength" : 0,
+            "type" : "string"
+          },
+          "category" : {
+            "maxLength" : 64,
+            "minLength" : 0,
+            "pattern" : "^[a-z][a-z-]{0,63}$",
+            "type" : "string"
+          },
+          "title" : {
+            "maxLength" : 512,
+            "minLength" : 0,
+            "type" : "string"
+          },
+          "body" : {
+            "maxLength" : 100000,
+            "minLength" : 0,
+            "type" : "string"
+          },
+          "sourceTable" : {
+            "maxLength" : 128,
+            "minLength" : 0,
+            "pattern" : "^[A-Za-z0-9][A-Za-z0-9_.-]{0,127}$",
+            "type" : "string"
+          },
+          "sourceId" : {
+            "maxLength" : 255,
+            "minLength" : 0,
+            "type" : "string"
+          }
+        }
+      },
+      "DeliveryResult" : {
+        "type" : "object",
+        "properties" : {
+          "delivered" : {
+            "type" : "boolean"
+          },
+          "deduped" : {
+            "type" : "boolean"
+          },
+          "reason" : {
+            "type" : "string"
+          }
+        }
+      },
+      "RevokeRequest" : {
+        "required" : [ "moderator", "reason" ],
+        "type" : "object",
+        "properties" : {
+          "reason" : {
+            "maxLength" : 255,
+            "minLength" : 0,
+            "type" : "string"
+          },
+          "moderator" : {
+            "maxLength" : 255,
+            "minLength" : 0,
+            "type" : "string"
+          },
+          "domain" : {
+            "maxLength" : 255,
+            "minLength" : 0,
+            "type" : "string"
+          }
+        }
+      },
+      "ModerationView" : {
+        "type" : "object",
+        "properties" : {
+          "id" : {
+            "type" : "string"
+          },
+          "nodeId" : {
+            "type" : "string"
+          },
+          "label" : {
+            "type" : "string"
+          },
+          "ownerSubject" : {
+            "type" : "string"
+          },
+          "ownerLocalpart" : {
+            "type" : "string"
+          },
+          "domain" : {
+            "type" : "string"
+          },
+          "state" : {
+            "type" : "string"
+          },
+          "visibility" : {
+            "type" : "string"
+          },
+          "revokeReason" : {
+            "type" : "string"
+          },
+          "revokedBy" : {
+            "type" : "string"
+          },
+          "revokedAt" : {
+            "type" : "string",
+            "format" : "date-time"
+          },
+          "createdAt" : {
+            "type" : "string",
+            "format" : "date-time"
+          },
+          "lastSeenAt" : {
+            "type" : "string",
+            "format" : "date-time"
+          }
+        }
+      },
+      "RestoreRequest" : {
+        "required" : [ "moderator" ],
+        "type" : "object",
+        "properties" : {
+          "moderator" : {
+            "maxLength" : 255,
+            "minLength" : 0,
+            "type" : "string"
+          },
+          "domain" : {
+            "maxLength" : 255,
+            "minLength" : 0,
+            "type" : "string"
+          }
+        }
+      },
+      "StatusReport" : {
+        "type" : "object",
+        "properties" : {
+          "nodeId" : {
+            "type" : "string"
+          },
+          "lastSeenAt" : {
+            "type" : "string",
+            "format" : "date-time"
+          },
+          "batteryPct" : {
+            "type" : "integer",
+            "format" : "int32"
+          },
+          "snr" : {
+            "type" : "number",
+            "format" : "double"
+          },
+          "hopsAway" : {
+            "type" : "integer",
+            "format" : "int32"
+          },
+          "viaDevice" : {
+            "type" : "string"
+          }
+        }
+      },
+      "ResolveRequest" : {
+        "required" : [ "status" ],
+        "type" : "object",
+        "properties" : {
+          "status" : {
+            "minLength" : 1,
+            "pattern" : "^(ACTIVE|REJECTED)$",
+            "type" : "string"
+          },
+          "findingId" : {
+            "type" : "integer",
+            "format" : "int64"
+          },
+          "reviewer" : {
+            "maxLength" : 255,
+            "minLength" : 0,
+            "type" : "string"
+          }
+        }
+      },
+      "VnSticker" : {
+        "type" : "object",
+        "properties" : {
+          "id" : {
+            "type" : "string"
+          },
+          "ownerSubject" : {
+            "type" : "string"
+          },
+          "domain" : {
+            "type" : "string"
+          },
+          "expression" : {
+            "type" : "string"
+          },
+          "mxcUrl" : {
+            "type" : "string"
+          },
+          "status" : {
+            "type" : "string"
+          },
+          "findingId" : {
+            "type" : "integer",
+            "format" : "int64"
+          },
+          "createdAt" : {
+            "type" : "string",
+            "format" : "date-time"
+          },
+          "label" : {
+            "type" : "string"
+          },
+          "slug" : {
+            "type" : "string"
+          }
+        }
+      },
+      "VnCharacterPart" : {
+        "type" : "object",
+        "properties" : {
+          "id" : {
+            "type" : "string"
+          },
+          "ownerSubject" : {
+            "type" : "string"
+          },
+          "domain" : {
+            "type" : "string"
+          },
+          "name" : {
+            "type" : "string"
+          },
+          "svg" : {
+            "type" : "string"
+          },
+          "status" : {
+            "type" : "string"
+          },
+          "headArchetype" : {
+            "type" : "string"
+          },
+          "findingId" : {
+            "type" : "integer",
+            "format" : "int64"
+          },
+          "createdAt" : {
+            "type" : "string",
+            "format" : "date-time"
+          }
+        }
+      },
+      "SavePartRequest" : {
+        "required" : [ "svg" ],
+        "type" : "object",
+        "properties" : {
+          "name" : {
+            "maxLength" : 120,
+            "minLength" : 0,
+            "type" : "string"
+          },
+          "headArchetype" : {
+            "maxLength" : 40,
+            "minLength" : 0,
+            "type" : "string"
+          },
+          "svg" : {
+            "maxLength" : 1000000,
+            "minLength" : 0,
+            "type" : "string"
+          }
+        }
+      },
+      "BlockRequest" : {
+        "required" : [ "target" ],
+        "type" : "object",
+        "properties" : {
+          "target" : {
+            "maxLength" : 512,
+            "minLength" : 0,
+            "type" : "string"
+          },
+          "platform" : {
+            "pattern" : "^(matrix|mastodon|internal)$",
+            "type" : "string"
+          }
+        }
+      },
+      "RegisterEmailRequest" : {
+        "required" : [ "email" ],
+        "type" : "object",
+        "properties" : {
+          "email" : {
+            "maxLength" : 320,
+            "minLength" : 0,
+            "type" : "string",
+            "format" : "email"
+          },
+          "displayName" : {
+            "maxLength" : 255,
+            "minLength" : 0,
+            "type" : "string"
+          },
+          "screenReaderName" : {
+            "maxLength" : 255,
+            "minLength" : 0,
+            "pattern" : "[\\x20-\\x7E]*",
+            "type" : "string"
+          }
+        }
+      },
+      "RegisterDiscordRequest" : {
+        "required" : [ "username" ],
+        "type" : "object",
+        "properties" : {
+          "username" : {
+            "maxLength" : 64,
+            "minLength" : 0,
+            "type" : "string"
+          },
+          "displayName" : {
+            "maxLength" : 255,
+            "minLength" : 0,
+            "type" : "string"
+          },
+          "screenReaderName" : {
+            "maxLength" : 255,
+            "minLength" : 0,
+            "pattern" : "[\\x20-\\x7E]*",
+            "type" : "string"
+          }
+        }
+      },
+      "ResetRequest" : {
+        "required" : [ "username" ],
+        "type" : "object",
+        "properties" : {
+          "username" : {
+            "maxLength" : 255,
+            "minLength" : 0,
+            "type" : "string"
+          }
+        }
+      },
+      "ResetConfirm" : {
+        "required" : [ "code", "newPassword", "username" ],
+        "type" : "object",
+        "properties" : {
+          "username" : {
+            "maxLength" : 255,
+            "minLength" : 0,
+            "type" : "string"
+          },
+          "code" : {
+            "maxLength" : 64,
+            "minLength" : 0,
+            "type" : "string"
+          },
+          "newPassword" : {
+            "maxLength" : 256,
+            "minLength" : 1,
+            "type" : "string"
+          }
+        }
+      },
+      "NativeLoginRequest" : {
+        "type" : "object",
+        "properties" : {
+          "username" : {
+            "type" : "string"
+          },
+          "password" : {
+            "type" : "string"
+          },
+          "mfaPasscode" : {
+            "type" : "string"
+          },
+          "mfaType" : {
+            "type" : "string"
+          }
+        }
+      },
+      "UserSession" : {
+        "type" : "object",
+        "properties" : {
+          "id" : {
+            "type" : "string"
+          },
+          "createdAt" : {
+            "type" : "string",
+            "format" : "date-time"
+          },
+          "expiresAt" : {
+            "type" : "string",
+            "format" : "date-time"
+          }
+        }
+      },
+      "UserNotification" : {
+        "type" : "object",
+        "properties" : {
+          "id" : {
+            "type" : "string"
+          },
+          "userSubject" : {
+            "type" : "string"
+          },
+          "category" : {
+            "type" : "string"
+          },
+          "title" : {
+            "type" : "string"
+          },
+          "body" : {
+            "type" : "string"
+          },
+          "createdAt" : {
+            "type" : "string",
+            "format" : "date-time"
+          },
+          "readAt" : {
+            "type" : "string",
+            "format" : "date-time"
+          }
+        }
+      },
+      "ServerSentEventSseNotificationEvent" : {
+        "type" : "object"
+      },
+      "MediaPoisonDecision" : {
+        "type" : "object",
+        "properties" : {
+          "id" : {
+            "type" : "string"
+          },
+          "userId" : {
+            "type" : "string"
+          },
+          "platform" : {
+            "type" : "string"
+          },
+          "mediaRef" : {
+            "type" : "string"
+          },
+          "mode" : {
+            "type" : "string"
+          },
+          "status" : {
+            "type" : "string"
+          },
+          "backend" : {
+            "type" : "string"
+          },
+          "createdAt" : {
+            "type" : "string",
+            "format" : "date-time"
+          }
+        }
+      },
+      "BridgeMapping" : {
+        "type" : "object",
+        "properties" : {
+          "nodeId" : {
+            "type" : "string"
+          },
+          "localpart" : {
+            "type" : "string"
+          },
+          "displayName" : {
+            "type" : "string"
+          },
+          "visibility" : {
+            "type" : "string"
+          }
+        }
+      },
+      "ConnectedClient" : {
+        "type" : "object",
+        "properties" : {
+          "id" : {
+            "type" : "string"
+          },
+          "owner" : {
+            "type" : "string"
+          },
+          "platform" : {
+            "type" : "string"
+          },
+          "clientKind" : {
+            "type" : "string"
+          },
+          "externalRef" : {
+            "type" : "string"
+          },
+          "label" : {
+            "type" : "string"
+          },
+          "createdAt" : {
+            "type" : "string",
+            "format" : "date-time"
+          },
+          "revokedAt" : {
+            "type" : "string",
+            "format" : "date-time"
+          }
+        }
+      },
+      "CharacterAvatarRef" : {
+        "type" : "object",
+        "properties" : {
+          "ref" : {
+            "type" : "string"
+          },
+          "url" : {
+            "type" : "string"
+          }
+        }
+      },
+      "UserBlock" : {
+        "type" : "object",
+        "properties" : {
+          "id" : {
+            "type" : "string"
+          },
+          "userId" : {
+            "type" : "string"
+          },
+          "target" : {
+            "type" : "string"
+          },
+          "platform" : {
+            "type" : "string"
+          },
+          "ts" : {
+            "type" : "string",
+            "format" : "date-time"
+          }
+        }
+      },
+      "MediaPoisonMode" : {
+        "type" : "string",
+        "description" : "User-facing AI-cloak intensity for the media.poison.default preference (BFF-owned vocabulary; the source of truth for UI clients): off = no cloaking, low = subtle, medium = recommended default, high = aggressive. Maps server-side onto the engine cloak modes none|light|glaze|nightshade.",
+        "enum" : [ "off", "low", "medium", "high" ]
+      }
+    }
+  }
 }
