@@ -13,8 +13,9 @@ an Angular native-federation remote with its own OpenAPI navigator. It is not a 
 - **Spec loading that fails in the open.** The committed spec loads first. If that is missing, the
   navigator fetches the spec live from the running service. If neither works, the page says "not
   yet published". It never shows a silently empty page. A committed spec with no operations counts
-  as missing. All six committed specs (`src/assets/specs/`) are stubs today, so the live fetch does
-  the work.
+  as missing. The Admin, Mod, User and Wiki specs in `src/assets/specs/` are copies of the specs
+  those backends commit. The Federation and Actions specs are stubs, so the live fetch does the work
+  for those two.
 - **Spec extensions.** Services can add `x-hugmesh` keys to their OpenAPI documents (`sampleRequest`,
   `sampleResponse`, `sampleEvent`, `sse`, `binaryUpload`, `blurb`, `longDescription`). The navigator
   uses them to render better.
@@ -119,7 +120,7 @@ care about.
 
 ## Roadmap
 
-- Replace the six stub specs with real captures as backend services publish real OpenAPI documents.
+- Replace the Federation and Actions stub specs with real captures once those services publish OpenAPI documents. Refresh the Admin, Mod, User and Wiki copies when their backends change.
 
 ## License
 
