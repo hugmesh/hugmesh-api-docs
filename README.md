@@ -56,6 +56,22 @@ readiness probes. The build passes `--base-href=/api-docs/`: the gateway routes 
 this image, and without the flag the bundle requests its chunks from `/`. The host shell mounts the
 remote at `/admin/docs`.
 
+## Releasing
+
+The version lives in `package.json` (and `package-lock.json`, which must match). Today it is a
+beta, `MAJOR.MINOR.PATCH-beta.N`. `.github/workflows/release.yml` publishes
+`ghcr.io/hugmesh/hugmesh-api-docs`:
+
+- A push to `main` pushes `:main` and `:sha-<12 hex>`.
+- Pushing the tag `v<version>` (for example `v0.2.0-beta.1`, on a commit on `main`) pushes
+  `:<version>`, `:beta` and `:sha-<12 hex>`, and creates a GitHub Release marked prerelease.
+  A version tag that already exists in the registry is never overwritten: raise `N` instead.
+- `:latest` is never pushed for a beta.
+
+`scripts/release-version.sh` is the guard: it refuses a tag that does not match the version, a
+lock file that disagrees, a SNAPSHOT, and any pull-request run. `npm run test:release-version`
+tests it.
+
 ## Security scanning
 
 The pipeline carries the platform's standard OWASP pen-test stage. It comes from the generator
