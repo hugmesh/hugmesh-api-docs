@@ -1,6 +1,6 @@
 {
   "name": "@hugmesh/api-docs",
-  "version": "0.1.0",
+  "version": "0.2.0-beta.1",
   "description": "Admin-gated federated remote: browse the platform OpenAPI specs (admin/mod/user BFFs, federation-api, actions). Angular micro-frontend (native-federation remote) for the hugmesh.net host. Reuses the hugmesh.games api-docs ecosystem.",
   "license": "MIT",
   "private": true,
@@ -13,6 +13,7 @@
     "test:watch": "ng test api-docs",
     "check:ci-wiring": "bash scripts/check-ci-wiring.sh",
     "test:ci-wiring": "bash scripts/check-ci-wiring.test.sh",
+    "test:release-version": "bash scripts/release-version.test.sh",
     "gen": "ng-openapi-gen --config ng-openapi-gen.json",
     "gen:fetch:admin": "curl -sf http://localhost:8080/v3/api-docs -o src/assets/specs/openapi-admin.json",
     "gen:fetch:mod": "curl -sf http://localhost:8080/v3/api-docs -o src/assets/specs/openapi-mod.json",
