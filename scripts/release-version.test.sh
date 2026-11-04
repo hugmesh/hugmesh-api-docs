@@ -78,23 +78,18 @@ expect_refused() {
 good="$work/good"
 make_repo "$good" 0.2.0-beta.1 0.2.0-beta.1 0.2.0-beta.1
 
-expect_ok "push to main is a main build" "$good" push refs/heads/main \
-  version=0.2.0-beta.1 kind=main prerelease=true channel=beta
-expect_ok "dispatch on main is a main build" "$good" workflow_dispatch refs/heads/main kind=main
-expect_ok "matching v tag is a release" "$good" push refs/tags/v0.2.0-beta.1 \
-  version=0.2.0-beta.1 kind=release prerelease=true channel=beta
-expect_ok "dispatch on the matching tag re-runs the release" "$good" workflow_dispatch \
-  refs/tags/v0.2.0-beta.1 kind=release
+# The ref does not matter here: scripts/release-channel.sh decides what a ref
+# publishes (tested by scripts/test-release-channel.sh).
+expect_ok "push of a beta version prints it" "$good" push refs/heads/main version=0.2.0-beta.1
+expect_ok "dispatch prints the version" "$good" workflow_dispatch refs/tags/v0.2.0-beta.1 \
+  version=0.2.0-beta.1
 
 final="$work/final"
 make_repo "$final" 0.2.0 0.2.0 0.2.0
-expect_ok "a final version is not a prerelease and moves no channel" "$final" push \
-  refs/tags/v0.2.0 kind=release prerelease=false channel=
+expect_ok "a stable version is accepted" "$final" push refs/tags/v0.2.0 version=0.2.0
+expect_ok "a stable version on its release branch is accepted" "$final" push \
+  refs/heads/release/0.2 version=0.2.0
 
-expect_refused "tag that does not match package.json" "$good" push refs/tags/v0.2.0-beta.2 \
-  "does not match package.json version"
-expect_refused "tag without the v prefix" "$good" push refs/tags/0.2.0-beta.1 "publishes nothing"
-expect_refused "feature branch" "$good" workflow_dispatch refs/heads/feature/x "publishes nothing"
 expect_refused "pull request merge ref" "$good" pull_request refs/pull/7/merge \
   "refusing to publish from a pull_request run"
 expect_refused "pull_request_target even on main" "$good" pull_request_target refs/heads/main \
@@ -123,7 +118,7 @@ expect_refused "missing event" "$good" "" refs/heads/main "GITHUB_EVENT_NAME is 
 
 # The real repo's own files must pass on main: this is what keeps package.json
 # and package-lock.json from drifting apart in a commit.
-expect_ok "this repo's package.json and lock agree" "$(cd "$here/.." && pwd)" push refs/heads/main kind=main
+expect_ok "this repo's package.json and lock agree" "$(cd "$here/.." && pwd)" push refs/heads/main
 
 echo "release-version: $pass passed, $failures failed"
 [ "$failures" -eq 0 ]

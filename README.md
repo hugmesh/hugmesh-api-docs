@@ -58,19 +58,26 @@ remote at `/admin/docs`.
 
 ## Releasing
 
-The version lives in `package.json` (and `package-lock.json`, which must match). Today it is a
-beta, `MAJOR.MINOR.PATCH-beta.N`. `.github/workflows/release.yml` publishes
-`ghcr.io/hugmesh/hugmesh-api-docs`:
+The version lives in `package.json` (and `package-lock.json`, which must match). It is either a
+beta, `MAJOR.MINOR.PATCH-beta.N`, cut from `main`, or a stable `MAJOR.MINOR.PATCH`, cut from a
+`release/MAJOR.MINOR` branch. `.github/workflows/release.yml` publishes
+`ghcr.io/hugmesh/hugmesh-api-docs`, and the TAG decides the channel:
 
 - A push to `main` pushes `:main` and `:sha-<12 hex>`.
-- Pushing the tag `v<version>` (for example `v0.2.0-beta.1`, on a commit on `main`) pushes
-  `:<version>`, `:beta` and `:sha-<12 hex>`, and creates a GitHub Release marked prerelease.
-  A version tag that already exists in the registry is never overwritten: raise `N` instead.
-- `:latest` is never pushed for a beta.
+- A push to `release/X.Y` pushes `:sha-<12 hex>` only. The branch must be named exactly
+  `release/X.Y` and carry an `X.Y.*` version.
+- The tag `vX.Y.Z-beta.N` (on a commit on `main`) pushes `:X.Y.Z-beta.N`, `:beta` and
+  `:sha-<12 hex>`, and creates a GitHub Release marked prerelease, never Latest.
+- The tag `vX.Y.Z` (on a commit on `release/X.Y`) pushes `:X.Y.Z`, `:X.Y`, `:latest` and
+  `:sha-<12 hex>`, and creates a GitHub Release marked Latest. A patch on an older line (a newer
+  stable is already published) moves `:X.Y` but not `:latest`, and its release is not marked Latest.
+- `:X.Y.Z` is never overwritten: raise the beta number, or cut the next patch from `release/X.Y`.
+  `:beta`, `:X.Y` and `:latest` move. Every pushed tag is checked against the signed digest.
 
-`scripts/release-version.sh` is the guard: it refuses a tag that does not match the version, a
-lock file that disagrees, a SNAPSHOT, and any pull-request run. `npm run test:release-version`
-tests it.
+`scripts/release-version.sh` reads the version: it refuses a lock file that disagrees, a SNAPSHOT,
+and any pull-request run. `scripts/release-channel.sh` decides what the ref publishes, and is run
+again right before the push and right before the GitHub Release is created. The version job runs
+both self-tests first: `npm run test:release-version` and `npm run test:release-channel`.
 
 ## Security scanning
 

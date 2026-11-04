@@ -1,24 +1,23 @@
 #!/usr/bin/env bash
-# release-version.sh — the version guard for .github/workflows/release.yml.
-#
-# Decides what kind of publish this run is, from the event and the ref, and
-# refuses anything that is not one of the two allowed shapes:
-#
-#   refs/heads/main          -> kind=main     (image tags :main + :sha-<12>)
-#   refs/tags/v<version>     -> kind=release  (image tags :<version> + :beta + :sha-<12>,
-#                                              plus a GitHub prerelease)
+# release-version.sh — reads and checks the version for .github/workflows/release.yml.
 #
 # The version source is package.json `.version`. package-lock.json must carry
 # the same string in both of its version fields, so the image, the lock and the
-# tag can never disagree. A pull_request run is always refused: this workflow
-# publishes, and publishing never happens from a PR.
+# tag can never disagree. The version must be MAJOR.MINOR.PATCH[-pre] with no
+# `+build` part and no SNAPSHOT. A pull_request run is always refused: this
+# workflow publishes, and publishing never happens from a PR.
 #
-# Inputs (environment): GITHUB_EVENT_NAME, GITHUB_REF; optional REPO_ROOT
-# (defaults to the directory above this script). Outputs `version`, `kind`,
-# `prerelease` and `channel` as key=value lines on stdout, and appends them to
-# $GITHUB_OUTPUT when that is set. Exit 1 with a reason on stderr otherwise.
+# This script does not look at the ref. What a run publishes (main, release/X.Y,
+# a beta tag vX.Y.Z-beta.N on main, a stable tag vX.Y.Z on release/X.Y), the
+# image tags and the GitHub Release flags are decided by
+# scripts/release-channel.sh from the version printed here.
 #
-# Tested by scripts/release-version.test.sh (npm run test:release-version).
+# Inputs (environment): GITHUB_EVENT_NAME; optional REPO_ROOT
+# (defaults to the directory above this script). Output: one `version=<v>` line
+# on stdout. Exit 1 with a reason on stderr otherwise.
+#
+# Tested by scripts/release-version.test.sh (npm run test:release-version),
+# which the release workflow's version job runs first.
 set -euo pipefail
 
 fail() {
@@ -29,10 +28,8 @@ fail() {
 script_dir=$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)
 root=${REPO_ROOT:-"$script_dir/.."}
 event=${GITHUB_EVENT_NAME:-}
-ref=${GITHUB_REF:-}
 
 [ -n "$event" ] || fail "GITHUB_EVENT_NAME is not set"
-[ -n "$ref" ] || fail "GITHUB_REF is not set"
 
 case "$event" in
   pull_request | pull_request_target)
@@ -76,37 +73,4 @@ case "$pkg_version" in
   *SNAPSHOT*) fail "version '$pkg_version' is a SNAPSHOT; never publish one" ;;
 esac
 
-case "$ref" in
-  refs/heads/main)
-    kind=main
-    ;;
-  refs/tags/v*)
-    tag_version=${ref#refs/tags/v}
-    [ "$tag_version" = "$pkg_version" ] ||
-      fail "tag v$tag_version does not match package.json version $pkg_version"
-    kind=release
-    ;;
-  *)
-    fail "ref '$ref' publishes nothing: only refs/heads/main and refs/tags/v<version> do"
-    ;;
-esac
-
-case "$pkg_version" in
-  *-*)
-    prerelease=true
-    channel=beta
-    ;;
-  *)
-    # A final release. Nothing has reached one yet; whether it also moves
-    # :latest is a decision for that day, so no channel tag is pushed.
-    prerelease=false
-    channel=
-    ;;
-esac
-
-out=$(printf 'version=%s\nkind=%s\nprerelease=%s\nchannel=%s\n' \
-  "$pkg_version" "$kind" "$prerelease" "$channel")
-printf '%s\n' "$out"
-if [ -n "${GITHUB_OUTPUT:-}" ]; then
-  printf '%s\n' "$out" >>"$GITHUB_OUTPUT"
-fi
+printf 'version=%s\n' "$pkg_version"
