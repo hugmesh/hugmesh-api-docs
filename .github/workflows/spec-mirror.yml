@@ -1,0 +1,29 @@
+# Spec mirror: src/assets/specs/openapi-admin.json must be a byte-for-byte copy
+# of the admin BFF's committed spec, at the commit scripts/spec-mirror.lock
+# records. Runs on pull requests and on pushes to main.
+#
+# No secrets, a read-only token, no npm install. The battery is offline; the
+# second step fetches the recorded commit's file from the public backend repo.
+name: Spec mirror
+
+on:
+  pull_request:
+  push:
+    branches: [main]
+
+permissions:
+  contents: read
+
+jobs:
+  spec-mirror:
+    name: spec mirror (admin BFF)
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+        with:
+          persist-credentials: false
+      - name: Guard battery (offline, mutation legs)
+        run: bash scripts/check-spec-mirror.test.sh
+      - name: Mirror equals the backend spec at the recorded commit
+        run: bash scripts/check-spec-mirror.sh --fetch

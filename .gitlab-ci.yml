@@ -45,6 +45,22 @@ lint:ci-wiring:
   script:
     - bash scripts/check-ci-wiring.test.sh
 
+# lint:spec-mirror — src/assets/specs/openapi-admin.json must be the admin BFF's
+# committed spec, at the commit scripts/spec-mirror.lock records. Offline here
+# (the battery plus the recorded-hash check); the GitHub workflow
+# .github/workflows/spec-mirror.yml also compares against the fetched source.
+lint:spec-mirror:
+  stage: lint
+  needs: []
+  tags: [hugmesh-x86]
+  rules:
+    - if: '$CI_COMMIT_BRANCH == $CI_DEFAULT_BRANCH'
+    - if: '$CI_PIPELINE_SOURCE == "merge_request_event"'
+    - if: '$CI_COMMIT_TAG'
+  script:
+    - bash scripts/check-spec-mirror.test.sh
+    - bash scripts/check-spec-mirror.sh
+
 # NEEDS: [] — same rule as the pen-test jobs below, applied to the release job.
 # This file adds a `lint` stage in FRONT of `build`, and stage ordering is a gate:
 # without an explicit needs:, a red lint:ci-wiring would stop the image build (and

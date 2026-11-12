@@ -13,6 +13,8 @@
     "test:watch": "ng test api-docs",
     "check:ci-wiring": "bash scripts/check-ci-wiring.sh",
     "test:ci-wiring": "bash scripts/check-ci-wiring.test.sh",
+    "check:spec-mirror": "bash scripts/check-spec-mirror.sh --fetch",
+    "test:spec-mirror": "bash scripts/check-spec-mirror.test.sh",
     "test:release-version": "bash scripts/release-version.test.sh",
     "test:release-channel": "bash scripts/test-release-channel.sh",
     "gen": "ng-openapi-gen --config ng-openapi-gen.json",
