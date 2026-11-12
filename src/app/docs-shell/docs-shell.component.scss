@@ -1,6 +1,8 @@
 // DocsShell layout — adapted from the games api-docs but re-themed onto the
 // HugMesh brand --hug-* custom properties (WCAG-AA palette from styles.scss)
 // instead of the games' hardcoded light-mode hex.
+@use '../../styles/tokens' as t;
+
 :host {
   display: flex;
   height: 100%;
@@ -232,4 +234,25 @@ button.op {
   padding: 24px 18px;
   color: var(--hug-text-muted);
   font-style: italic;
+}
+
+// ── narrow viewport: navigator above the detail pane ─────────────────────────
+// Side by side, the 300px navigator left a phone's detail pane ~60px of text
+// width, so the version and the empty-state copy broke one character per line
+// ("v / 0 / . / 1"), and the host shell sizes a routed view to fit its content,
+// so the whole view came out ~433px wide at 390. Below md the navigator stacks
+// above the pane at full width. Its height is capped (it already scrolls on its
+// own) so a long operation list does not push the pane a screen or more down.
+@media (max-width: t.$bp-md) {
+  :host {
+    flex-direction: column;
+  }
+
+  .nav {
+    width: auto;
+    flex: 0 0 auto;
+    max-height: 45vh;
+    border-right: 0;
+    border-bottom: 1px solid var(--hug-border);
+  }
 }
