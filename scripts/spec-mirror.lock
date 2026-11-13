@@ -1,0 +1,6 @@
+# Spec mirrors: one row per committed copy of a backend OpenAPI spec.
+# Checked by scripts/check-spec-mirror.sh (never rewritten by it). To re-sync a
+# mirror, copy the backend file over it and update that row's commit and sha256.
+#
+# NAME  MIRROR  OWNER/REPO  COMMIT  SOURCE_PATH  SHA256
+admin src/assets/specs/openapi-admin.json hugmesh/hugmesh-admin-bff-api c077c52037f030c62781a86af6d9da6c01e5abb3 src/main/resources/openapi/openapi.json 55376ff7ca5f7dedc6a2338a9d0cd3d867820578a3027462ec4c52d6a4263c2e

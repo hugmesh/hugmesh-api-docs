@@ -48,6 +48,17 @@ To replace a stub spec with a real one, run a dev-profile instance of the servic
 `npm run gen:fetch:<service>`, where `<service>` is `admin`, `mod`, `user`, `federation`,
 `actions` or `wiki`.
 
+### Spec mirrors
+
+`src/assets/specs/openapi-admin.json` is a byte-for-byte copy of the admin BFF's committed
+`src/main/resources/openapi/openapi.json`. `scripts/spec-mirror.lock` records the commit it was
+copied from and that file's sha256. `npm run check:spec-mirror` fails if the mirror is not that
+file (a hand edit, or one hunk carried over by hand), and fetches the file at the recorded commit
+to prove it. `npm run test:spec-mirror` runs the guard against broken copies. Both run in
+`.github/workflows/spec-mirror.yml` on every pull request; the GitLab `lint:spec-mirror` job runs
+the offline half. The guard never rewrites a mirror. To re-sync, copy the backend file over the
+mirror and update the commit and sha256 on its lock row.
+
 ## Deploy
 
 The Dockerfile builds in a `node:24-alpine` stage and serves the bundle from `nginx:1.27-alpine`.
